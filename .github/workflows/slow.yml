@@ -1,0 +1,25 @@
+name: Slow validation
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1"      # Mondays at 03:00 UTC
+
+# The slow tests regenerate synthetic corpora and re-derive the measured
+# findings of DD-64 to DD-77 and DD-94 to DD-101. Run them after any change
+# to a default or to a measurement decision: in 0.22 a default moved and seven
+# of them failed unnoticed for a year.
+jobs:
+  slow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[io,ml,viz,parallel,dev]"
+      - run: python -m pytest -m slow -n auto -rA --durations=0
+        env:
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"

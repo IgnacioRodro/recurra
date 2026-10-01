@@ -1,0 +1,21 @@
+# Citation is appreciated, not required: the licence is MIT.
+cff-version: 1.2.0
+message: "If you use recurra in published work, please consider citing it."
+title: "recurra: recurrence quantification and nonlinear dynamics for multivariate signals"
+type: software
+authors:
+  - family-names: "Rodriguez-Rodriguez"
+    given-names: "Ignacio"
+  - family-names: "Ortiz Garcia"
+    given-names: "Andres"
+license: MIT
+version: "0.25.0.dev0"
+repository-code: "https://github.com/IgnacioRodro/recurra"
+keywords:
+  - recurrence plot
+  - recurrence quantification analysis
+  - cross recurrence
+  - joint recurrence
+  - nonlinear dynamics
+  - multivariate time series
+  - cross-frequency coupling

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="34 34 72 72" width="72" height="72" role="img" aria-label="recurra">
+  <title>recurra</title>
+  <rect x="34" y="34" width="72" height="72" rx="14" fill="#141A26"/>
+  <path d="M45,95 L95,45" stroke="#F2F4F7" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M45,71 L71,45" stroke="#2E5BFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M69,95 L95,69" stroke="#FF8A3D" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

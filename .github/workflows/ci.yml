@@ -1,0 +1,81 @@
+name: CI
+on: [push, pull_request]
+
+# Five jobs, each answering one question:
+#   lint             is the code clean to the pinned ruff version?
+#   test             does the full fast suite pass, with every extra, on each OS and Python?
+#   core-only        does the core work with nothing optional installed? [P6, DD-17]
+#   minimum-versions are the declared dependency floors true?
+#   coverage         which lines does no test execute?
+# The slow validation tests live in slow.yml: they re-derive measured findings
+# and take tens of minutes, so they run weekly and on demand, not on every push.
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "ruff==0.16.*"
+      - run: ruff check src tests examples tools
+
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[ml,viz,parallel,dev]"
+      # h5py and pyedflib may have no wheel yet for the newest Python on every
+      # platform. Without them the EDF/HDF5 tests skip; nothing else depends on them.
+      - run: pip install -e ".[io]" || echo "io extra unavailable here; its tests will be skipped"
+        shell: bash
+      - run: python -m pytest -m "not slow" -n auto -rs
+
+  core-only:
+    # Only the core and the test runner. Tests that need an optional backend
+    # carry @pytest.mark.requires and skip; every other test must pass, which
+    # is how an optional import leaking into a core code path gets caught.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest -m "not slow" -n auto -rs
+
+  minimum-versions:
+    # The declared floors are a claim about what works; pin them and run.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install "numpy==1.24.*" "scipy==1.10.*" "pandas==1.5.*"
+      - run: pip install -e . --no-deps
+      - run: pip install pytest pytest-xdist
+      - run: python -m pytest -m "not slow" -n auto -rs
+
+  coverage:
+    # Measured with `coverage run`, not pytest-cov: pyproject's warning filter
+    # makes pytest import recurra before pytest-cov starts, and every def,
+    # class and import line then counts as missed (64% reported, 85% real).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[io,ml,viz,parallel,dev]"
+      - run: python -m coverage run --source=src/recurra -m pytest -m "not slow"
+      - run: python -m coverage report -m --skip-covered
