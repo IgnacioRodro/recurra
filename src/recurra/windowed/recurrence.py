@@ -434,14 +434,16 @@ def windowed_recurrence(source, window, *, kind: str = "rp", threshold=None, tar
     fs = _fs(srcs[0])
     windows, caveats = resolve_windows(window, n, fs, _t0(srcs[0]))
 
-    thresholds = _resolve_thresholds(srcs, windows, kind, scope, threshold, rng, kwargs)
-
     # The common options are explicit parameters [DD-118]; they travel to the
-    # threshold estimator and the builder like any other keyword.
+    # threshold estimator and the builder like any other keyword. They must be
+    # in place *before* the thresholds are resolved: placed after it in the
+    # first 0.25 draft, every windowed threshold silently used target_rr=0.05,
+    # theiler=1 and the Euclidean metric whatever was asked for.
     kwargs.update(target_rr=target_rr, theiler=theiler, metric=metric,
                   precision=precision)
     if store is not None:
         kwargs["store"] = store
+    thresholds = _resolve_thresholds(srcs, windows, kind, scope, threshold, rng, kwargs)
     build_kwargs = {k: v for k, v in kwargs.items()
                     if k in ("metric", "theiler", "dtype", "store", "tile_size",
                              "budget_gb", "combine", "precision")}

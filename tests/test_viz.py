@@ -86,9 +86,13 @@ def test_every_single_figure_takes_one_object(rec_pac, ss_pac):
                                     "amplitude_b": "amp_gamma"}),
     }
     assert set(objects) == set(SINGLE_FIGURES)
+    import matplotlib.pyplot as plt
+
     for name, (obj, kw) in objects.items():
         fn, _ = SINGLE_FIGURES[name]
-        assert fn(obj, **kw) is not None
+        fig = fn(obj, **kw)
+        assert fig is not None
+        plt.close(fig)        # one test draws every figure: close as it goes
 
 
 def test_single_figure_does_not_mutate_its_input(ss_pac):

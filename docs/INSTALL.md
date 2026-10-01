@@ -157,8 +157,8 @@ cd path/to/recurra
 pytest -q
 ```
 
-603 test cases (509 test functions) should pass. `pytest -m "not slow"` runs
-the 573 fast ones; on a laptop that takes about ten minutes, on a slower
+605 test cases (510 test functions) should pass. `pytest -m "not slow"` runs
+the 575 fast ones; on a laptop that takes about ten minutes, on a slower
 machine up to forty. The fifteen EDF reader tests need the `io` extra
 (`pyedflib`) and are skipped without it. The 30 slow ones regenerate corpora to re-derive measured
 findings.

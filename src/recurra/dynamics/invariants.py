@@ -172,12 +172,21 @@ def correlation_sum(source, *, n_radii: int = 40, theiler: int | str = "auto",
 
 def correlation_dimension(source, *, n_radii: int = 40, theiler: int | str = "auto",
                           max_points: int = 4000, region=None,
-                          min_points: int = 8, rng: SeedLike = None,
-                          **kwargs) -> Invariant:
+                          min_points: int = 8, max_C: float = 0.05,
+                          rng: SeedLike = None, **kwargs) -> Invariant:
     """D2 by Grassberger-Procaccia, over an automatically located region [DD-61].
 
     Pass ``region=(lo, hi)`` in units of log radius to fit a window of your
     own instead.
+
+    ``max_C`` bounds the automatic search to radii whose ball holds at most
+    that share of the attractor (default 5%) [DD-121]. The dimension is a
+    small-radius limit (Grassberger and Procaccia 1983; Eckmann and Ruelle
+    1992); near the attractor's size the correlation sum bends toward
+    saturation and can form a second, flatter plateau. On Lorenz the two
+    plateaus sat at 2.0 (C below 1%) and 1.6 (C from 7% to 50%), and a
+    perturbation of 1e-9 in the initial condition was enough for the flatness
+    criterion to pick the wrong one, unflagged.
 
     Note this is the **correlation** dimension, which is not the Kaplan-Yorke
     dimension often quoted alongside it and is generally a little smaller.
@@ -191,7 +200,14 @@ def correlation_dimension(source, *, n_radii: int = 40, theiler: int | str = "au
                             max_points=max_points, rng=rng)
     x, y = curve["log_r"].to_numpy(), curve["log_C"].to_numpy()
     if region is None:
-        reg = find_scaling_region(x, y, min_points=min_points, **kwargs)
+        small = np.where(y <= np.log(max_C), y, np.nan)
+        if int(np.isfinite(small).sum()) >= min_points:
+            y_search = small
+        else:
+            # Too few radii below the bound to fit at all: search the whole
+            # curve, and let the region's own checks judge the result.
+            y_search = y
+        reg = find_scaling_region(x, y_search, min_points=min_points, **kwargs)
     else:
         reg = fixed_region(x, y, *region)
 
@@ -204,11 +220,20 @@ def correlation_dimension(source, *, n_radii: int = 40, theiler: int | str = "au
     # how the space was built, not of the data in it.
     warning = reg.warning
     if warning is None and region is None:
-        span = reg.n_points / max(int(np.isfinite(y).sum()), 1)
-        if span > 0.9 and reg.r_squared > 0.9999:
+        # Straightness is judged on the whole curve, not on the fitted region:
+        # since DD-121 the search stops below the saturating scale, so the
+        # fitted share no longer tells whether the curve bends anywhere.
+        fin = np.isfinite(x) & np.isfinite(y)
+        xs, ys = x[fin], y[fin]
+        r2_all = np.nan
+        if xs.size >= 3 and np.ptp(ys) > 0:
+            b, a = np.polyfit(xs, ys, 1)
+            r2_all = 1.0 - float(np.sum((ys - (b * xs + a)) ** 2)) / float(
+                np.sum((ys - ys.mean()) ** 2))
+        if np.isfinite(r2_all) and r2_all > 0.9999:
             warning = (
-                f"the fit covers {span:.0%} of the correlation sum with "
-                f"R2 = {reg.r_squared:.6f}: the curve does not bend, so there "
+                f"the whole correlation sum is a straight line, R2 = {r2_all:.6f}: "
+                f"the curve does not bend, so there "
                 "is no scaling region to find. A dimension this well determined "
                 "is usually the dimension of the construction -- a phase circle "
                 "crossed with an amplitude gives 2 whatever the signal does -- "
@@ -221,7 +246,7 @@ def correlation_dimension(source, *, n_radii: int = 40, theiler: int | str = "au
         name="D2", value=reg.slope, units="dimensionless", fs=fs,
         method="Grassberger-Procaccia", region=reg, curve=curve,
         diagnostics={"theiler": theiler, "n_radii": n_radii,
-                     "max_points": max_points,
+                     "max_points": max_points, "max_C": max_C,
                      "region_share": float(reg.n_points
                                            / max(int(np.isfinite(y).sum()), 1)),
                      **({"warning": warning} if warning else {})},

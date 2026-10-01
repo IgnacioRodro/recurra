@@ -70,6 +70,11 @@ Pre-release audit. Changes that alter results are listed first.
 
 **Fixed**
 
+- **D2 could lock onto the saturating plateau of the correlation sum [DD-121].**
+  On a Lorenz trajectory 1e-9 away from the test's, it returned 1.61 against
+  2.05, unflagged. The automatic search now stays where `C(r) <= max_C`
+  (5% by default). Found through the first GitHub CI run, which failed on the
+  macOS (ARM) runners for the same test.
 - `dynamics_measures` given a plain 1-D array computed every measure on its
   first sample only (`atleast_2d(x).T[0]`), so all of them failed.
 - `modulogram` did not wrap the phase: a phase in [0, 2π) put every value
@@ -111,6 +116,9 @@ Pre-release audit. Changes that alter results are listed first.
   `max_steps=300` is always sound; on one trajectory it gave 1.273. The
   clause now asks only that the guard does not flag everything, and DD-101
   records the measured specificity: two of four good estimates were flagged.
+- A regression test for the windowed options: `target_rr`, `theiler` and
+  `metric` set to non-default values must reach every window's threshold.
+  An intermediate draft of this version dropped them silently (DD-118).
 - New tests for the command line (it had none) and for embedding estimation:
   AMI against an independent histogram estimate, Lorenz recovered, an exactly
   periodic series, warnings at the edge of the search range.

@@ -128,6 +128,7 @@ Status: `accepted` · `provisional` · `revised` · `rejected`
 | [DD-118](#dd-118) | No counter-intuitive calls: one name per idea, defaults that agree | accepted | F16 |
 | [DD-119](#dd-119) | **Meta-recurrence of the window measurements** | accepted | F16 |
 | [DD-120](#dd-120) | A recurrence plot is drawn with its signals | accepted | F16 |
+| [DD-121](#dd-121) | **D2 is a small-radius limit: the search stays below the saturating scale** | accepted | F16 |
 
 ---
 
@@ -4637,6 +4638,14 @@ common options explicitly; `precision` reaches every structure. `threshold()`
 warns when epsilon is at rounding level. Old spellings keep working, so no
 script breaks.
 
+**A regression caught before release.** In the first draft the explicit
+windowed options were merged *after* the per-window thresholds had been
+estimated, so every windowed threshold used `target_rr=0.05`, `theiler=1`
+and the Euclidean metric whatever was asked for. The fast tests all passed,
+because they asked for exactly those defaults; a slow validation test caught
+it as a drift of RR between window lengths. A test now sets all three to
+non-default values (0.20, 7, Chebyshev) and checks them on every window.
+
 ---
 
 <a id="dd-119"></a>
@@ -4697,3 +4706,34 @@ measures). They use the logo's colours. In them the line of identity runs
 from bottom left to top right, the classical orientation; `plot_recurrence`
 keeps the matrix orientation it always had. `tools/make_gallery.py`
 regenerates the gallery shown in the README from fixed seeds.
+
+---
+
+<a id="dd-121"></a>
+## DD-121 · D2 is a small-radius limit: the search stays below the saturating scale
+
+**Status:** accepted (0.25.0). Refines [DD-61].
+
+**Context.** The first GitHub CI run failed on all five macOS runners in one
+test: D2 of Lorenz from a delay embedding came out right (about 2.0) but
+flagged. The macOS runners are ARM machines, whose rounding differs (fused
+multiply-add), and a chaotic trajectory integrated for 200 s turns that into a
+different trajectory. Reproducing it by perturbing the initial condition by
+1e-9 found something worse than the CI had: one trajectory gave **D2 = 1.61,
+unflagged**. Its local-slope curve had two plateaus, the true one at about 2.0
+for small radii (C(r) below 1%, radii under 5% of the attractor) and a second,
+flatter one at about 1.6 for large radii (C(r) from 7% to 50%), where the
+correlation sum bends toward saturation. DD-61 chose the flattest window
+wherever it was, and both passed its width and flatness checks.
+
+**Decision.** `correlation_dimension` searches automatically only where
+`C(r) <= max_C`, default 0.05: a ball holding more than 5% of the attractor
+is not small, and the correlation dimension is a small-radius limit
+(Grassberger and Procaccia 1983; Eckmann and Ruelle 1992). If fewer than
+`min_points` radii qualify, the whole curve is searched and the region's own
+checks judge the result. `region=(lo, hi)` still fits any window by hand.
+
+**Verified.** Over twelve Lorenz trajectories 1e-9 apart, D2 ranged from 1.94
+to 2.06 (reference 2.05); ten were unflagged and the two flagged ones were
+right too. The test is now a contract over four such trajectories, one of
+them the case that gave 1.61, instead of a fact about one machine.

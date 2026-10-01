@@ -11,7 +11,7 @@ Recurrence analysis over **arbitrary state spaces**, for multivariate signals an
 
 Unlike existing RQA libraries, the phase space is not necessarily built by Takens delays: it can be defined from observable variables — for instance `s(t) = (cos φ_low, sin φ_low, A_high)` for PAC — or by combining both routes. Nothing forces the coupling reading: the same engine serves signals with no coupling at all.
 
-> **Status: pre-alpha, 0.25.0.dev0.** Every phase except F11 (higher-order tensors) and F12 (Costas arrays) is implemented and tested: 509 test functions, 603 cases. The library has carried one complete real study, a 49-child EEG corpus. What remains is listed in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> **Status: pre-alpha, 0.25.0.dev0.** Every phase except F11 (higher-order tensors) and F12 (Costas arrays) is implemented and tested: 510 test functions, 605 cases. The library has carried one complete real study, a 49-child EEG corpus. What remains is listed in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ---
 

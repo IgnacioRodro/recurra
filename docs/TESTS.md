@@ -55,8 +55,8 @@ python examples/run_all.py        # 54 figures, 45 tables, 3 run reports
 | 21 | `test_threshold.py` | Threshold selection | DD-32, DD-35 | 18 |
 | 22 | `test_validation.py` | test_validation.py |  | 26 |
 | 23 | `test_viz.py` | Figures | DD-27, DD-30, DD-31, DD-38, DD-49..52 | 39 |
-| 24 | `test_windowed.py` | Windowed analysis | DD-39, DD-40, DD-41 | 48 |
-| | | | **total** | **509 functions** |
+| 24 | `test_windowed.py` | Windowed analysis | DD-39, DD-40, DD-41 | 49 |
+| | | | **total** | **510 functions** |
 
 Parametrised tests expand to more cases; run `pytest -q` for the count.
 
@@ -227,7 +227,7 @@ Decisions: DD-45
 | `test_unknown_block_invariant_is_rejected` | Unknown block invariant is rejected. |
 | `test_a_block_too_short_to_embed_warns_rather_than_returning_nan_silently` | A block too short to embed warns rather than returning nan silently. |
 | `test_auto_theiler_scales_with_the_embedding` | DD-96. Points closer in time than the embedding window share coordinates, so counting them as neighbours makes the cloud look one-dimensional exactly where D2 is read. |
-| `test_correlation_dimension_of_lorenz_from_a_delay_embedding` | The reference case. With a Theiler window of 1 this returned 1.60 against a reference of 2.05, and the estimate was rejected for a scaling region of 0.39 decades [DD-96]. |
+| `test_correlation_dimension_of_lorenz_from_a_delay_embedding` | The reference case, as a contract over four trajectories [DD-96, DD-121]. Initial conditions 1e-9 apart stand in for four machines: chaos turns a difference in rounding -- the fused multiply-add of... |
 | `test_the_lyapunov_exponent_from_a_series_keeps_its_contract` | DD-101, from a delay embedding of one coordinate. Which reference points are drawn was deciding the answer: twelve streams over identical data gave 0.501 to 1.366, eleven of them unflagged. Three s... |
 | `test_the_sampling_spread_is_reported` | An estimate that moves with the draw must say so [DD-101]. |
 | `test_one_sampling_is_the_old_behaviour` | One sampling is the old behaviour. |
@@ -750,3 +750,4 @@ Decisions: DD-39, DD-40, DD-41
 | `test_batch_metrics_parallelise_and_agree` | DD-109. The build was parallel and the metrics were not, though they are four fifths of the work. Results must not depend on n_jobs, and the histograms DD-108 caches must survive the process bounda... |
 | `test_windowed_metrics_share_the_rqa_floors` | The two entry points must default to the same l_min and v_min. |
 | `test_classical_indices_refuse_a_rescaled_amplitude` | A z-scored amplitude is not an envelope: computed on it, MVL came out at 13.3 and MI at 0.88 on a signal whose values were 0.31 and 0.035, with no warning. The table now says NaN and the reason, once. |
+| `test_every_explicit_option_reaches_the_window_thresholds` _(×2)_ | Regression [DD-118]: the options must reach the threshold estimator, not only the plot. In the first 0.25 draft they arrived after the thresholds had been estimated, so target_rr=0.20, theiler=7 an... |

@@ -529,3 +529,25 @@ def test_classical_indices_refuse_a_rescaled_amplitude():
         table = wr.metrics(rqa=False, classical=True)
     for column in ("mvl", "mi_tort", "mod_contrast", "preferred_phase"):
         assert table[column].isna().all()
+
+
+@pytest.mark.parametrize("scope", ["per_window", "global"])
+def test_every_explicit_option_reaches_the_window_thresholds(scope):
+    """Regression [DD-118]: the options must reach the threshold estimator,
+    not only the plot. In the first 0.25 draft they arrived after the
+    thresholds had been estimated, so target_rr=0.20, theiler=7 and
+    metric="chebyshev" were silently estimated as 0.05, 1 and Euclidean.
+    Values different from every default are the only way to see that."""
+    sig = rc.generate_cfc(modality="pac", duration=16.0, fs=250.0, alpha=0.7, rng=3)
+    rec = rc.analytic(rc.filterbank(sig.to_recording("s"), {"theta": (4, 8),
+                                                           "gamma": (50, 70)}),
+                      sources=["theta", "gamma"])
+    ss = sm.pac_space(rec, smooth=12.0)
+    wr = rc.windowed_recurrence(ss, rc.WindowSpec(n_windows=4), target_rr=0.20,
+                                theiler=7, metric="chebyshev", scope=scope, rng=0)
+    for i in range(len(wr)):
+        m = wr[i]
+        assert m.threshold.theiler == 7 and m.theiler == 7
+        assert m.threshold.metric == "chebyshev" and m.metric == "chebyshev"
+        tolerance = 0.02 if scope == "per_window" else 0.08
+        assert m.recurrence_rate() == pytest.approx(0.20, abs=tolerance)

@@ -8,7 +8,7 @@ before a public release. Decisions referenced by ID live in
 [`DESIGN_DECISIONS.md`](DESIGN_DECISIONS.md); the module map and the status of
 every module live in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-State at 0.25.0.dev0: 509 test functions (603 cases); every phase except
+State at 0.25.0.dev0: 510 test functions (605 cases); every phase except
 F11 and F12 implemented; one complete real study carried end to end (49
 children, 32-channel EEG at 500 Hz, two recording blocks, delta and theta
 envelope dynamics, subject-level classification).
