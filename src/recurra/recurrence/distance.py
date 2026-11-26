@@ -88,35 +88,55 @@ def to_distance(D: np.ndarray, metric: str = "euclidean") -> np.ndarray:
     return np.sqrt(D) if metric == "euclidean" else D
 
 
+def _ordered_pair_distances(A: np.ndarray, B: np.ndarray, i: np.ndarray,
+                            j: np.ndarray, metric: str) -> np.ndarray:
+    """Distances between rows ``A[i]`` and ``B[j]``, coordinate by coordinate.
+
+    The coordinates are combined one after another, in order, with one
+    elementwise operation each, so the result is defined to the last bit and
+    another engine can reproduce it [DD-125]. ``np.einsum`` gave no such
+    guarantee: on one machine it summed the squares of coordinates 0 and 2
+    first, an order that depends on the numpy build and the processor.
+    """
+    At = np.ascontiguousarray(np.asarray(A, dtype=float).T)
+    Bt = At if B is A else np.ascontiguousarray(np.asarray(B, dtype=float).T)
+    acc = None
+    for k in range(At.shape[0]):
+        diff = At[k][i] - Bt[k][j]
+        if metric == "euclidean":
+            term = diff * diff
+        else:
+            term = np.abs(diff)
+        if acc is None:
+            acc = term
+        elif metric == "chebyshev":
+            acc = np.maximum(acc, term)
+        else:
+            acc = acc + term
+    if acc is None:
+        return np.zeros(np.shape(i), dtype=float)
+    return np.sqrt(acc) if metric == "euclidean" else acc
+
+
+def _cosine_rows(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    na = np.linalg.norm(a, axis=1); nb = np.linalg.norm(b, axis=1)
+    na[na == 0] = 1.0; nb[nb == 0] = 1.0
+    return 1.0 - np.einsum("ij,ij->i", a, b) / (na * nb)
+
+
 def pairwise_rows(X: np.ndarray, i: np.ndarray, j: np.ndarray,
                   metric: str = "euclidean") -> np.ndarray:
     """Distances for an explicit list of (i, j) pairs within one trajectory."""
     _check_metric(metric)
-    d = X[i] - X[j]
-    if metric == "euclidean":
-        return np.sqrt(np.einsum("ij,ij->i", d, d))
-    if metric == "chebyshev":
-        return np.max(np.abs(d), axis=1)
-    if metric == "manhattan":
-        return np.sum(np.abs(d), axis=1)
-    a, b = X[i], X[j]
-    na = np.linalg.norm(a, axis=1); nb = np.linalg.norm(b, axis=1)
-    na[na == 0] = 1.0; nb[nb == 0] = 1.0
-    return 1.0 - np.einsum("ij,ij->i", a, b) / (na * nb)
+    if metric == "cosine":
+        return _cosine_rows(X[i], X[j])
+    return _ordered_pair_distances(X, X, i, j, metric)
 
 
 def pairwise_cross_rows(X1: np.ndarray, X2: np.ndarray, i: np.ndarray,
                         j: np.ndarray, metric: str = "euclidean") -> np.ndarray:
     """Distances for explicit pairs taken one from each trajectory."""
     _check_metric(metric)
-    d = X1[i] - X2[j]
-    if metric == "euclidean":
-        return np.sqrt(np.einsum("ij,ij->i", d, d))
-    if metric == "chebyshev":
-        return np.max(np.abs(d), axis=1)
-    if metric == "manhattan":
-        return np.sum(np.abs(d), axis=1)
-    a, b = X1[i], X2[j]
-    na = np.linalg.norm(a, axis=1); nb = np.linalg.norm(b, axis=1)
-    na[na == 0] = 1.0; nb[nb == 0] = 1.0
-    return 1.0 - np.einsum("ij,ij->i", a, b) / (na * nb)
+    if metric == "cosine":
+        return _cosine_rows(X1[i], X2[j])
+    return _ordered_pair_distances(X1, X2, i, j, metric)

@@ -73,7 +73,11 @@ When you write tests:
   arrive where they matter.
 - **Parallel paths give the same answer as serial ones** [DD-81]: test them at
   more than one value of `n_jobs`.
-- Slow tests carry `@pytest.mark.slow`.
+- Slow tests carry `@pytest.mark.slow`; tests that need a CUDA device carry
+  `@pytest.mark.cuda` and are skipped without one (`docs/INSTALL.md`,
+  section 11, says how to run them).
+- **Two engines, one answer** [DD-125]: anything the torch engine computes
+  is tested against the numpy engine for exact equality, not closeness.
 
 ## 5. Keep the documents in step
 

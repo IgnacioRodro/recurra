@@ -1,4 +1,5 @@
 """Recurrence quantification: metrics derived from line-length histograms."""
+from .batch import batch_rqa
 from .histogram import LineHistogram, line_histogram, line_histogram_dense
 from .metrics import (
     DENOMINATORS,
@@ -11,7 +12,7 @@ from .metrics import (
 )
 
 __all__ = [
-    "rqa", "crqa", "rqa_from_histogram", "diagonal_profile",
+    "rqa", "crqa", "rqa_from_histogram", "diagonal_profile", "batch_rqa",
     "line_length_sweep",
     "LineHistogram", "line_histogram", "line_histogram_dense",
     "METRIC_NAMES", "DENOMINATORS",

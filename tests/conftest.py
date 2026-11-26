@@ -29,3 +29,10 @@ def pytest_runtest_setup(item):
         missing = [m for m in marker.args if importlib.util.find_spec(m) is None]
         if missing:
             pytest.skip(f"optional backend not installed: {', '.join(missing)}")
+    if item.get_closest_marker("cuda") is not None:
+        # The GPU tests run only where PyTorch sees a CUDA device; continuous
+        # integration has none, so there they are skipped [DD-125].
+        from recurra.engine import cuda_devices
+
+        if not cuda_devices():
+            pytest.skip("no CUDA device visible to PyTorch")

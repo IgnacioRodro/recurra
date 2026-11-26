@@ -1,13 +1,14 @@
 name: CI
 on: [push, pull_request]
 
-# Six jobs, each answering one question:
+# Seven jobs, each answering one question:
 #   lint             is the code clean to the pinned ruff version?
 #   test             does the full fast suite pass, with every extra, on each OS and Python?
 #   core-only        does the core work with nothing optional installed? [P6, DD-17]
 #   minimum-versions are the declared dependency floors true?
 #   coverage         which lines does no test execute?
 #   build            does the wheel a user installs build, install and run?
+#   torch-cpu        does the torch engine give the reference's answer? [DD-125]
 # The slow validation tests live in slow.yml: they re-derive measured findings
 # and take tens of minutes, so they run weekly and on demand, not on every push.
 
@@ -100,3 +101,20 @@ jobs:
         working-directory: /tmp
       - run: /tmp/clean/bin/recurra doctor
         working-directory: /tmp
+
+  torch-cpu:
+    # The torch engine without a GPU. PyTorch's CPU build runs all of the
+    # engine's logic -- thresholds bit for bit, histograms count for count,
+    # batch and band invariance -- on every push, slow battery included, so
+    # only what is specific to CUDA (the `cuda` tests, skipped here) waits for
+    # a machine with a GPU; docs/INSTALL.md says how to run those.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e ".[all,dev]"
+      - run: recurra doctor
+      - run: python -m pytest tests/test_engine.py -n auto -rs

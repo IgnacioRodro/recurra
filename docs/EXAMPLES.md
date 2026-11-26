@@ -832,6 +832,42 @@ or `"none"`). Windows with a missing value are dropped with a warning
 (`missing="drop"`) or refused (`missing="error"`). A meta-series has tens of
 points, so a higher `target_rr` than for a signal is usually right.
 
+### 8b.9 Many windows at once, on the CPU or a GPU [DD-125]
+
+When the trajectories of the windows are already computed -- an array of
+shape `(windows, points, dimensions)`, or a list of arrays of any lengths --
+`batch_rqa` gives one row of RQA per window. Each row is exactly what the
+single-plot path gives with the same integer seed:
+
+```python
+X = np.stack([ss.coords[k * 2560:(k + 1) * 2560] for k in range(40)])   # 40 windows
+table = rc.batch_rqa(X, target_rr=0.05, theiler=1, rng=0)               # engine="auto"
+print(table[["window", "epsilon", "RR", "DET", "LAM"]])
+print(table.attrs["provenance"]["engine"])         # which engine ran, and on what
+
+# the same table, on the reference engine with 20 worker processes
+same = rc.batch_rqa(X, target_rr=0.05, rng=0, engine="numpy", n_jobs=20)
+
+# on a GPU, insisting on it (an error if PyTorch sees no device: never a
+# silent fall back to the CPU)
+gpu = rc.batch_rqa(X, target_rr=0.05, rng=0, engine="torch", device="cuda:0",
+                   precision="mixed")              # single precision, cells near epsilon in double
+```
+
+`engine="auto"` -- the default here and in `metrics()` -- takes the first CUDA
+device when PyTorch sees one and the windows are long enough to gain from it,
+and announces its choice once; on a machine without a GPU it is the numpy
+engine. The windowed path uses the same engines:
+
+```python
+table = rc.windowed_recurrence(ss, rc.WindowSpec(size=10, overlap=0.5, unit="seconds"),
+                               target_rr=0.05, rng=0).metrics(rqa=True)   # engine="auto"
+print(table.attrs["engine"])
+```
+
+For worker processes, use the physical cores (`recurra doctor` prints how
+many): a second hardware thread per core gave nothing for this work.
+
 ## 8c. Comparability across subjects [DD-42, DD-43, DD-44]
 
 Recurrence structures are only comparable if they were built the same way. Three defaults break that silently, so it is checked rather than assumed.

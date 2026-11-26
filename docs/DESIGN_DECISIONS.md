@@ -23,7 +23,7 @@ Status: `accepted` · `provisional` · `revised` · `rejected`
 | [DD-13](#dd-13) | Alpha preserves the marginal spectrum | accepted | F8 |
 | [DD-14](#dd-14) | Channels as a mapping, not a matrix | accepted | F1 |
 | [DD-15](#dd-15) | Metric output: tidy DataFrame | accepted | F0 |
-| [DD-16](#dd-16) | GPU backend: PyTorch | provisional | F5 |
+| [DD-16](#dd-16) | GPU backend: PyTorch | revised (see DD-125) | F5 |
 | [DD-17](#dd-17) | Numba optional, numpy always present | accepted | F0 |
 | [DD-18](#dd-18) | Unequal record lengths allowed | accepted | F1 |
 | [DD-19](#dd-19) | Corrected Theiler semantics | revised | F5 |
@@ -89,7 +89,7 @@ Status: `accepted` · `provisional` · `revised` · `rejected`
 | [DD-79](#dd-79) | Single precision is a choice, not a default | revised | F7 |
 | [DD-80](#dd-80) | **Decimation changes the metrics, not just the cost** | accepted | F7 |
 | [DD-81](#dd-81) | **Parallelism must not change the answer** | accepted | F7 |
-| [DD-82](#dd-82) | Parallelise across units, not inside one | accepted | F7 |
+| [DD-82](#dd-82) | Parallelise across units, not inside one | accepted, revised in 0.26 | F7 |
 | [DD-83](#dd-83) | **Windows of one subject are not independent samples** | accepted | F13 |
 | [DD-84](#dd-84) | Everything that learns goes inside the fold | accepted | F13 |
 | [DD-85](#dd-85) | Imbalanced-aware scores, with a baseline | accepted | F13 |
@@ -132,6 +132,7 @@ Status: `accepted` · `provisional` · `revised` · `rejected`
 | [DD-122](#dd-122) | **Epsilon is never an observed distance; a small sample is the whole population** | accepted | F17 |
 | [DD-123](#dd-123) | A raw 2-D array is always (n_points, n_dimensions) | accepted | F17 |
 | [DD-124](#dd-124) | **Line histograms by whole-array operations over full-width bands** | accepted | F17 |
+| [DD-125](#dd-125) | **Two engines, one answer: the torch engine and `engine="auto"`** | accepted (CUDA validation pending) | F17 |
 
 ---
 
@@ -474,7 +475,9 @@ Decided with the user. `pandas.DataFrame` in long format. `xarray` would be clea
 <a id="dd-16"></a>
 ## DD-16 · GPU backend: PyTorch
 
-**Status:** provisional (to confirm when the GPU backend lands)
+**Status:** revised in 0.26.0 by [DD-125]: PyTorch is confirmed; the rest of
+this entry -- one device-aware distance kernel, float32 blocks -- is not what
+was built, for the reasons given there.
 
 Against CuPy: PyTorch will be needed anyway for the CNN work, so reusing it avoids a dependency. The available server has 4 GPUs with 11 GB, enough for 8192×8192 float32 blocks (268 MB).
 
@@ -3133,6 +3136,18 @@ minutes per subject with single precision and decimation by two [DD-79,
 DD-80], and forty subjects are independent, so the corpus is roughly two hours
 of wall clock on eight cores rather than fourteen.
 
+**Revised (0.26.0): processes by default, measured.** The prediction above was
+checked on the machine that matters, a two-socket server with 20 physical
+cores (40 hardware threads), on windows of 2560 and 10 240 points. Threads
+gave at most 4.2 times one core with 8 workers and less with 38: recurrence
+quantification spends most of its time in code that holds the interpreter
+lock, not in BLAS, and with the old per-line histogram even 38 threads were
+slower than one. Worker processes, timed inside each worker, reached 13 times
+one core at 2560 points and 11 times at 10 240 with 20 workers, and no more
+with 38: the second hardware thread of a core adds nothing to this work. So
+`backend="auto"` now means processes; `"thread"` remains available. Results
+do not change: with 38 processes the RQA was identical to the serial run. Use
+the number of physical cores for `n_jobs`; `recurra doctor` prints it.
 
 ---
 
@@ -4930,7 +4945,7 @@ points, 12 767 calls and 0.54 s per plot, of which the distances took
 **Decision.**
 
 1. `line_histogram` walks the matrix in **row bands of full width**, about
-   `BAND_CELLS = 2**20` cells each (fewer if `tile_size` asks for fewer), and
+   `BAND_CELLS` cells each (2**18; fewer if `tile_size` asks for fewer), and
    finds all the runs of a band at once: each column becomes a row of an
    array, padded and differenced, so +1 and -1 mark where runs start and end;
    diagonals are sheared into columns first. The carry of [DD-56] is one array
@@ -4952,8 +4967,9 @@ and 5, bands from one row to the whole matrix, streamed and stored, cross
 plots in both orientations, joint plots and asymmetric FAN plots. Each of
 three deliberate errors in the new code (no carry, no closing of an open run,
 no band flag at the end of a white run) fails 20 to 32 of those cases. Band
-size was chosen by measurement: 2**20 cells was within 10% of the best at
-every size from 1280 to 10 240 points.
+size was chosen by measurement: on one core, 2**20 cells was within 10% of
+the best at every size from 1280 to 10 240 points; on the target server with
+20 workers, 2**18 was better (below).
 
 **Measured** (`tools/benchmark_engine.py`, one core of a 2-core Xeon at
 2.1 GHz, one BLAS thread, numpy 2.5.3; both runs in
@@ -4980,6 +4996,15 @@ keep exact. *Exploiting symmetry* (diagonals k and -k are equal in a
 symmetric plot): it would halve the diagonal work but not the rest, and FAN
 plots are not symmetric; left for later if measurement asks for it.
 
+**Measured on the target server** (two Xeon Silver 4210R, 20 physical cores,
+13.75 MB of L3 per socket; numpy 2.5.5): one window of plot + histograms,
+0.25.0 against 0.26, took 0.174 against 0.033 s at 1280 points and 0.582
+against 0.140 s at 2560. With 20 workers at once, each window took 1.5 to 2.5
+times longer than alone, from cache and memory contention and a lower
+all-core clock, and the band size then mattered: at 10 240 points 4.51 s per
+window with bands of 2**18 cells against 5.75 s with 2**20, while alone the
+two were within 2%. `BAND_CELLS` is therefore 2**18.
+
 **Consequences.** No result changes: the counts are identical. The full fast
 suite went from 3 min 13 s to about 2 min 40 s on the same machine. The same
 algorithm, on integer arrays only, is what the device engine of [DD-16] will
@@ -4988,3 +5013,113 @@ run. Tests: `test_band_histogram_equals_both_references`,
 `test_band_clearing_matches_the_broadcast_mask`, and
 `test_streaming_histogram_equals_dense`, which now streams before it
 materialises.
+
+---
+
+<a id="dd-125"></a>
+## DD-125 · Two engines, one answer: the torch engine and `engine="auto"`
+
+**Status:** accepted (0.26.0); the CUDA part is validated by running the
+`cuda` tests and the benchmark on a machine with a GPU. Replaces the plan of
+[DD-16]; revises [DD-33] for the sampled distances.
+
+**Context.** A long-term iEEG study needs the RQA of tens of millions of
+windows of 1000 to 15 000 points. On the 20-core server it runs on, the CPU
+path at its best ([DD-124], processes per [DD-82]) would take about 2.5 days
+per pair of frequency bands with 10-second windows and 3.8 days with
+20-second windows, and the study has several pairs and their controls. The
+server has two RTX 3090 cards. DD-16 had planned a device version of
+`sq_distance_block` alone; measurement showed that the line histograms, not
+the distances, are three quarters of the cost, so a device kernel for
+distances would leave the bottleneck where it was. And the library is meant
+for anyone, with a GPU or without, so the device must be used when it is
+there and the CPU, at its best, when it is not.
+
+**Decision.**
+
+1. **Two engines.** `numpy`, the reference, always available; `torch`, on a
+   CUDA device (or on the CPU, which is how its logic is tested without a
+   GPU), from the `gpu` extra. `batch_rqa` (many windows in one call) and
+   `WindowedRecurrence.metrics()` take `engine` and `device`.
+2. **`engine="auto"` is the default** and picks the torch engine on the first
+   CUDA device when PyTorch sees one and the windows have at least
+   `AUTO_MIN_POINTS` points (512, provisional until measured on the GPU), and
+   the numpy engine otherwise. When a device exists the choice is announced
+   once with a `CaveatWarning`, whichever way it went; it is always recorded
+   in the provenance of the table. A machine without a GPU gets the reference
+   engine without a word, since nothing was chosen on its behalf.
+3. **`engine="torch"` never falls back.** Without PyTorch it raises
+   `BackendUnavailable` naming the `gpu` extra; without a visible device it
+   raises and says what to pass instead.
+4. **The same answer by construction**, not by tolerance:
+   - *Thresholds.* The pairs are those `sample_pair_indices` draws with the
+     same generator. Windows of one length share their pairs, which is what
+     one integer seed already gave every window; a generator is turned into
+     one seed per length. The device computes the compared values (squared
+     distances for euclidean), sorts them and locates the order statistics
+     and the neighbours of epsilon; numpy does the arithmetic on those few
+     values -- the square root, the linear interpolation of `np.quantile`,
+     the move of [DD-122], the achieved rate. A device's square root need not
+     be correctly rounded (PyTorch's on the CPU is not), and this keeps it out.
+   - *Sampled distances in a fixed order.* `pairwise_rows` used `np.einsum`,
+     whose summation order depends on the numpy build and the processor: on
+     one machine it added the squares of coordinates 0 and 2 first. It now
+     adds the coordinates one after another, as the device does, so the two
+     agree to the last bit. This moves some epsilons in their last bit.
+   - *Decisions.* Coordinate by coordinate, never as a matrix product, so
+     neither cuBLAS's choice of algorithm nor TF32 can enter (TF32 is switched
+     off anyway and recorded) and a cell's value does not depend on the
+     block it was computed in. In double precision a cell can disagree with
+     the reference, which expands the norm [DD-33], only if its distance is
+     within rounding of epsilon; [DD-122] keeps every sampled pair at least
+     1e-9 away, and the cells within 1e-12 are counted
+     (`cells_near_epsilon` in the provenance).
+   - *Counting.* The band algorithm of [DD-124] with a batch dimension:
+     differences, `nonzero`, integer `bincount`. No floating-point reduction
+     and no float atomics, so counts cannot depend on scheduling, batch size,
+     band height or device.
+5. **Precision.** `double` is the default, as on the CPU. `single` decides in
+   float32 and counts the cells within 1e-4 of epsilon; `mixed` recomputes
+   exactly those in float64, which restores the double decision. On cards
+   whose float64 is slow (1/64 of float32 on an RTX 3090) mixed is the fast
+   exact option; which is faster in practice is for the benchmark to say.
+6. **Memory and devices.** Batches and bands are sized from
+   `Config.gpu_memory_budget_gb` (8 GB by default) or `device_memory_gb`, and a
+   window whose single row does not fit raises `MemoryBudgetError` with the
+   numbers (P7, [DD-34]). One device per call; `CUDA_VISIBLE_DEVICES` is
+   respected; two GPUs means two processes. On the torch engine,
+   `batch_windowed_recurrence(...).metrics()` runs its records one after
+   another and lets the device batch their windows, rather than opening the
+   device from several worker processes.
+7. **Scope of 0.26.** Recurrence plots with a scalar threshold and the
+   euclidean, Chebyshev or Manhattan metric. Cross and joint plots, FAN and
+   per-block thresholds and the cosine metric stay on the reference engine
+   (in `metrics()`, those windows simply take the reference path; in
+   `batch_rqa`, the torch engine refuses the cosine metric). The thresholds
+   of `windowed_recurrence` are still estimated on the CPU at construction;
+   `batch_rqa` estimates them on the device.
+
+**Alternatives rejected.** *A device distance kernel only* (DD-16): leaves
+the histograms, three quarters of the cost, on the CPU, and the transfers of
+every block back. *CuPy*: a second array library where PyTorch is needed for
+the image-classification work anyway. *Float32 by default*: a different
+default from the CPU for the same call. *Thresholds on the device with their
+own generator*: different pairs, so different epsilons, so no comparison with
+the reference at all. *An exact quantile over all pairs on the device*: cheap
+there, and free of sampling error, but it changes every epsilon; worth a
+decision of its own once measured.
+
+**Verified** (PyTorch 2.15 on the CPU; the same tests marked `cuda` run on a
+GPU): epsilon and the achieved rate bit for bit equal to `threshold()` in 216
+of 216 cases (4 sizes, exact and sampled; 3 metrics; Theiler 0, 1, 5); tables
+and histograms equal to the reference engine for noise, a sine and Lorenz at
+601 and 1157 points, Theiler 0, 1, 2, 5, whole plots and bands of a few
+rows; batch sizes 1, 2 and 5 and bands of 3 rows identical; mixed precision
+equal to double on a cloud offset by 50; the windowed path identical on a
+phase-amplitude space. A deliberate error in the white-line rule fails 10 of
+the 14 equivalence cases (the other four have no Theiler band).
+
+**Consequences.** Results of the reference path move only through the fixed
+order of the sampled distances (some epsilons in their last bit). Tests:
+`tests/test_engine.py`; the `torch-cpu` CI job runs them on every push, and
+the `cuda` ones run where a GPU is (`docs/INSTALL.md`, section 11).

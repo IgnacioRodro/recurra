@@ -25,7 +25,7 @@ dynamics, subject-level classification).
 | I7 | `ingest` a precomputed recurrence matrix | Capability `RECURRENCE` without a state space; RQA must run on it |
 | I10 | `ingest` a `Corpus` object | `read_corpus` already returns a `CorpusIndex`; the missing piece is passing it straight to the batch layer |
 | I11 | Memory-mapped, lazy raw data | For corpora that do not fit in memory; the recurrence layer is already lazy |
-| DD-16 | GPU backend (PyTorch) | Decision still `provisional`. No kernel exists, so the `gpu` extra was withdrawn in 0.25. Planned for 0.26: batches of windows per call, line histograms computed on the device, results that do not depend on batch size, tile size or device. Done so far: the rule that makes two engines comparable (no pair at epsilon, DD-122) and the CPU algorithm the device will run (band histograms, DD-124) |
+| DD-16 | GPU backend (PyTorch) | Replaced by DD-125 in 0.26: the torch engine for recurrence plots, `engine="auto"`, the same answer as the CPU by construction. Pending: the CUDA battery and the benchmark on the target GPUs; cross and joint plots, FAN and per-block thresholds on the device; thresholds of `windowed_recurrence` on the device |
 | F6 leftovers | RQA measures `T1`, `T2`, `TREND`, `CLEAR`; recurrence-network measures (transitivity, clustering, average path length) | Planned with the line histograms and never written |
 | Validation | DET and LAM against published reference values for the standard systems | D2 and lambda_1 of Lorenz are already checked |
 | DD-54, DD-60 | Two decisions still `provisional` | The joint independence ratio as a coupling detector in time; RQA against the geometric index. Both measured on synthetic data only |

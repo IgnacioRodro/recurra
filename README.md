@@ -11,7 +11,7 @@ Recurrence analysis over **arbitrary state spaces**, for multivariate signals an
 
 Unlike existing RQA libraries, the phase space is not necessarily built by Takens delays: it can be defined from observable variables — for instance `s(t) = (cos φ_low, sin φ_low, A_high)` for PAC — or by combining both routes. Nothing forces the coupling reading: the same engine serves signals with no coupling at all.
 
-> **Status: pre-alpha; latest release 0.25.0.** Every phase except F11 (higher-order tensors) and F12 (Costas arrays) is implemented and tested: **527 test functions, all green**. The library has carried one complete real study, a 49-child EEG corpus. What remains is listed in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> **Status: pre-alpha; latest release 0.25.0.** Every phase except F11 (higher-order tensors) and F12 (Costas arrays) is implemented and tested: **547 test functions, all green**. The library has carried one complete real study, a 49-child EEG corpus. What remains is listed in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ---
 
@@ -20,6 +20,7 @@ Unlike existing RQA libraries, the phase space is not necessarily built by Taken
 ```bash
 # a release, pinned (recommended for analyses that must be reproducible)
 pip install "recurra[viz] @ git+https://github.com/IgnacioRodro/recurra.git@v0.25.0"
+# with the GPU engine: install PyTorch for your CUDA driver first (docs/INSTALL.md, section 10)
 # the development version
 pip install "git+https://github.com/IgnacioRodro/recurra.git"
 # working on the library itself
@@ -131,6 +132,7 @@ regenerates these.
 | **Windowed RP/CRP/JRP with overlap** | ✅ |
 | Multi-subject batch, lazy matrices | ✅ |
 | Meta-recurrence: RP, CRP and JRP of the window measurements | ✅ |
+| GPU engine (PyTorch, CUDA), chosen automatically, same results as the CPU | ✅ RP; CUDA validation in progress |
 | Comparability contracts and group separation | ✅ |
 | Figures: 22 single + 8 comparison | ✅ |
 | RQA: 14 metrics, streamed line histograms | ✅ |

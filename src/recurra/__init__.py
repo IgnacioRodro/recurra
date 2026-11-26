@@ -124,6 +124,7 @@ from .report import RunReport
 from .rqa import (
     METRIC_NAMES,
     LineHistogram,
+    batch_rqa,
     crqa,
     diagonal_profile,
     line_histogram,
@@ -230,7 +231,7 @@ __all__ = [
     "recurrence_plot", "cross_recurrence_plot", "joint_recurrence_plot",
     "RecurrenceMatrix",
     # rqa
-    "rqa", "crqa", "line_histogram", "LineHistogram", "diagonal_profile",
+    "rqa", "crqa", "batch_rqa", "line_histogram", "LineHistogram", "diagonal_profile",
     "line_length_sweep",
     "METRIC_NAMES",
     # dynamics
@@ -272,9 +273,23 @@ __all__ = [
 
 
 def doctor() -> str:
-    """Report which optional backends are available in this environment."""
+    """Report which optional backends are available in this environment,
+    the CUDA devices PyTorch can see, and the engine ``"auto"`` would pick."""
     b = available_backends()
     lines = [f"recurra {__version__}"]
     for k, v in b.items():
         lines.append(f"  {'OK ' if v else '-- '} {k}")
+    from .engine import cuda_devices, physical_cores, resolve_engine
+
+    if b.get("torch"):
+        import torch
+
+        lines.append(f"  torch {torch.__version__}, built for CUDA {torch.version.cuda}")
+        for dev in cuda_devices():
+            free, total = torch.cuda.mem_get_info(torch.device(dev))
+            lines.append(f"  {dev}: {torch.cuda.get_device_name(torch.device(dev))}, "
+                         f"{total / 1e9:.1f} GB, {free / 1e9:.1f} GB free")
+    choice = resolve_engine("auto", announce=False)
+    lines.append(f"  engine='auto' -> {choice.engine} on {choice.device} ({choice.reason})")
+    lines.append(f"  physical cores: {physical_cores()} (a good n_jobs)")
     return "\n".join(lines)

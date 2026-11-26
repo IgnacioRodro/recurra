@@ -51,6 +51,9 @@ class Config:
 
     #: Memory the library may use for a single computation, in GiB.
     memory_budget_gb: float = 4.0
+    #: Device memory the torch engine may use per call, in GB [DD-125, P7].
+    #: A third of a 24 GB card, leaving room for other work on it.
+    gpu_memory_budget_gb: float = 8.0
     #: Default dtype for state-space coordinates and distances.
     float_dtype: str = "float64"
     #: Emit warnings when a stage makes a consequential silent choice.
@@ -106,7 +109,7 @@ def available_backends() -> dict[str, bool]:
         "matplotlib": _has("matplotlib"),
         "pillow": _has("PIL"),
         "joblib": _has("joblib"),
-        # Detected for the planned GPU backend [DD-16]; nothing uses it yet.
+        # The torch engine [DD-125]: on CUDA when torch_cuda is also true.
         "torch": _has("torch"),
     }
     if out["torch"]:

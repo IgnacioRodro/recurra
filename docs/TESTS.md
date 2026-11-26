@@ -38,25 +38,26 @@ python examples/run_all.py        # 54 figures, 45 tables, 3 run reports
 | 4 | `test_comparability.py` | Comparability and groups | DD-42, DD-43, DD-44 | 29 |
 | 5 | `test_docs.py` | The living documents | DD-45 | 18 |
 | 6 | `test_dynamics.py` | test_dynamics.py |  | 63 |
-| 7 | `test_export.py` | CSV export | DD-10 | 4 |
-| 8 | `test_images.py` | test_images.py |  | 16 |
-| 9 | `test_ingest.py` | Ingestion | DD-08, DD-06 | 12 |
-| 10 | `test_meta.py` | test_meta.py |  | 7 |
-| 11 | `test_parallel.py` | test_parallel.py |  | 7 |
-| 12 | `test_preprocess.py` | Filtering and Hilbert | DD-11, DD-12 | 10 |
-| 13 | `test_realdata.py` | test_realdata.py |  | 15 |
-| 14 | `test_recording.py` | The Recording object | DD-07, DD-04 | 5 |
-| 15 | `test_recurrence.py` | Recurrence structures | DD-19, DD-20, DD-33, DD-34, DD-36 | 43 |
-| 16 | `test_report.py` | Run reports | DD-37 | 8 |
-| 17 | `test_rqa.py` | test_rqa.py |  | 28 |
-| 18 | `test_scaling.py` | The scaling policy | DD-02 | 8 |
-| 19 | `test_signals.py` | The synthetic generator | DD-13, DD-48 | 29 |
-| 20 | `test_statespace.py` | State space construction | DD-21, DD-23, DD-25, DD-28 | 54 |
-| 21 | `test_threshold.py` | Threshold selection | DD-32, DD-35 | 24 |
-| 22 | `test_validation.py` | test_validation.py |  | 26 |
-| 23 | `test_viz.py` | Figures | DD-27, DD-30, DD-31, DD-38, DD-49..52 | 41 |
-| 24 | `test_windowed.py` | Windowed analysis | DD-39, DD-40, DD-41 | 49 |
-| | | | **total** | **527 functions** |
+| 7 | `test_engine.py` | test_engine.py |  | 20 |
+| 8 | `test_export.py` | CSV export | DD-10 | 4 |
+| 9 | `test_images.py` | test_images.py |  | 16 |
+| 10 | `test_ingest.py` | Ingestion | DD-08, DD-06 | 12 |
+| 11 | `test_meta.py` | test_meta.py |  | 7 |
+| 12 | `test_parallel.py` | test_parallel.py |  | 7 |
+| 13 | `test_preprocess.py` | Filtering and Hilbert | DD-11, DD-12 | 10 |
+| 14 | `test_realdata.py` | test_realdata.py |  | 15 |
+| 15 | `test_recording.py` | The Recording object | DD-07, DD-04 | 5 |
+| 16 | `test_recurrence.py` | Recurrence structures | DD-19, DD-20, DD-33, DD-34, DD-36 | 43 |
+| 17 | `test_report.py` | Run reports | DD-37 | 8 |
+| 18 | `test_rqa.py` | test_rqa.py |  | 28 |
+| 19 | `test_scaling.py` | The scaling policy | DD-02 | 8 |
+| 20 | `test_signals.py` | The synthetic generator | DD-13, DD-48 | 29 |
+| 21 | `test_statespace.py` | State space construction | DD-21, DD-23, DD-25, DD-28 | 54 |
+| 22 | `test_threshold.py` | Threshold selection | DD-32, DD-35 | 24 |
+| 23 | `test_validation.py` | test_validation.py |  | 26 |
+| 24 | `test_viz.py` | Figures | DD-27, DD-30, DD-31, DD-38, DD-49..52 | 41 |
+| 25 | `test_windowed.py` | Windowed analysis | DD-39, DD-40, DD-41 | 49 |
+| | | | **total** | **547 functions** |
 
 Parametrised tests expand to more cases; run `pytest -q` for the count.
 
@@ -245,7 +246,32 @@ Decisions: DD-45
 | `test_phase_block_series_has_no_spurious_leading_sample` | The phase increment series starts with a real increment, not a zero. |
 | `test_fine_scale_decimation_leaves_enough_samples` | DD-99, revised in 0.25. A slow series in a short window asked for a decimation that left nine samples, and every fractal and entropy measure failed. The factor is now capped, the cap is announced, ... |
 
-## 7. `test_export.py` — CSV export
+## 7. `test_engine.py` — test_engine.py
+
+| Test | What it checks |
+|---|---|
+| `test_auto_without_a_device_uses_the_reference_quietly` | Auto without a device uses the reference quietly. |
+| `test_auto_announces_what_it_chose_when_a_device_exists` | P3: with a GPU present the choice is announced, whichever way it went. |
+| `test_torch_never_falls_back_to_the_cpu` | G3 of the request that motivated the engine: asking for the device and not getting it is an error, not a slower run. |
+| `test_missing_torch_names_the_extra` | Missing torch names the extra. |
+| `test_engine_arguments_are_checked` | Engine arguments are checked. |
+| `test_each_row_is_the_single_plot_path` _(×4)_ | DD-125: a row of batch_rqa is rqa(recurrence_plot(X, threshold(X))) with the integer seed, whatever else is in the batch. |
+| `test_reference_engine_gives_the_same_table_with_processes` | DD-81, DD-82: worker processes change the time, not the answer. |
+| `test_windows_of_different_lengths_keep_their_order` | Windows of different lengths keep their order. |
+| `test_torch_thresholds_are_numpys_to_the_last_bit` _(×3)_ | The device sorts and numpy does the arithmetic that decides epsilon, so epsilon and the achieved rate are identical, whether every pair is taken (40, 300 points) or a sample is drawn (1157). |
+| `test_torch_engine_equals_the_reference` _(×3)_ | The battery that verified the CPU path -- three systems, four Theiler windows -- against the torch engine on the CPU, on an odd size, in one band and in bands of a few rows. |
+| `test_torch_engine_equals_the_reference_at_1157_points` _(×3)_ | The same at 1157 points, the size that exposed the figure bug of 0.25, where the thresholds are sampled rather than exact. |
+| `test_torch_engine_equals_the_reference_for_other_metrics` _(×2)_ | Torch engine equals the reference for other metrics. |
+| `test_batch_size_and_band_height_change_nothing` | G2, G5: one window per batch or all of them, whole plots or bands of three rows -- identical histograms. |
+| `test_mixed_precision_restores_the_double_decision` | Single precision decides in float32 and counts the cells within float32 rounding of epsilon; mixed recomputes exactly those in float64. |
+| `test_torch_engine_refuses_what_it_cannot_do` | Torch engine refuses what it cannot do. |
+| `test_cuda_engine_equals_the_reference` _(×3)_ | The same battery on the GPU, at 1157 points, in double and in mixed precision. |
+| `test_cuda_engine_is_deterministic` | G5: run twice, with PyTorch's deterministic mode on, and with batch sizes 1 and all: identical. |
+| `test_both_gpus_give_the_same_answer` | Both gpus give the same answer. |
+| `test_windowed_metrics_are_the_same_on_the_torch_engine` | The call a study makes, windowed_recurrence(...).metrics(rqa=True), with the histograms computed by the torch engine: the same table, and the engine recorded. |
+| `test_windowed_metrics_are_the_same_on_cuda` | Windowed metrics are the same on cuda. |
+
+## 8. `test_export.py` — CSV export
 
 That every table gets its provenance and environment sidecars.
 
@@ -258,7 +284,7 @@ Decisions: DD-10
 | `test_export_recording_tables` | Export recording tables. |
 | `test_csv_exporter_accumulates` | Csv exporter accumulates. |
 
-## 8. `test_images.py` — test_images.py
+## 9. `test_images.py` — test_images.py
 
 | Test | What it checks |
 |---|---|
@@ -279,7 +305,7 @@ Decisions: DD-10
 | `test_attractor_export_shares_its_scale` | DD-91 again: per-image normalisation would rescale away the differences between subjects. |
 | `test_an_outlying_burst_does_not_squeeze_the_trajectory` | DD-50: robust limits, or one burst puts everything in a few pixels. |
 
-## 9. `test_ingest.py` — Ingestion
+## 10. `test_ingest.py` — Ingestion
 
 The input shapes, role assignment, quality checks, and the errors that name their own fix.
 
@@ -300,7 +326,7 @@ Decisions: DD-08, DD-06
 | `test_csv_roundtrip` | Csv roundtrip. |
 | `test_quality_flags_constant_channel` | Quality flags constant channel. |
 
-## 10. `test_meta.py` — test_meta.py
+## 11. `test_meta.py` — test_meta.py
 
 | Test | What it checks |
 |---|---|
@@ -312,7 +338,7 @@ Decisions: DD-08, DD-06
 | `test_cross_and_joint_meta_recurrence` | Cross and joint meta recurrence. |
 | `test_the_panel_draws_a_meta_plot_with_more_metrics_than_windows` | Regression: 13 metrics over 12 windows were transposed and failed. |
 
-## 11. `test_parallel.py` — test_parallel.py
+## 12. `test_parallel.py` — test_parallel.py
 
 | Test | What it checks |
 |---|---|
@@ -324,7 +350,7 @@ Decisions: DD-08, DD-06
 | `test_batch_worker_is_picklable` | DD-81: the process backend pickles the callable, so it cannot be a lambda. This is the mistake the first implementation made. |
 | `test_serial_backend_is_always_available` | joblib is an optional dependency; asking for one worker must never reach it. |
 
-## 12. `test_preprocess.py` — Filtering and Hilbert
+## 13. `test_preprocess.py` — Filtering and Hilbert
 
 Filter order from cycle counts, band isolation, edge policies, and the full chain end to end.
 
@@ -343,7 +369,7 @@ Decisions: DD-11, DD-12
 | `test_resample_changes_fs_and_length` | Resample changes fs and length. |
 | `test_full_chain_recovers_known_pac` | End to end: generate -> ingest -> filter -> Hilbert -> canonical index. |
 
-## 13. `test_realdata.py` — test_realdata.py
+## 14. `test_realdata.py` — test_realdata.py
 
 | Test | What it checks |
 |---|---|
@@ -363,7 +389,7 @@ Decisions: DD-11, DD-12
 | `test_ambiguous_label_column_asks` | Ambiguous label column asks. |
 | `test_corpus_labels_feed_the_classifier` | The chain the whole module exists for: files on disk to a group label. |
 
-## 14. `test_recording.py` — The Recording object
+## 15. `test_recording.py` — The Recording object
 
 Copy-on-write sharing, read-only buffers, provenance accumulation.
 
@@ -377,7 +403,7 @@ Decisions: DD-07, DD-04
 | `test_provenance_accumulates` | Provenance accumulates. |
 | `test_channel_frame_is_exportable` | Channel frame is exportable. |
 
-## 15. `test_recurrence.py` — Recurrence structures
+## 16. `test_recurrence.py` — Recurrence structures
 
 Distance kernels, streaming equivalence bit for bit, Theiler bands, RP/CRP/JRP, memory refusal.
 
@@ -429,7 +455,7 @@ Decisions: DD-19, DD-20, DD-33, DD-34, DD-36
 | `test_the_plot_does_not_depend_on_the_number_of_blas_threads` | DD-33: the cross term of the distance is a matrix product, and a multithreaded BLAS may split it differently with each thread count. The plot and its RQA must not change. Same trajectory as the che... |
 | `test_band_clearing_matches_the_broadcast_mask` | DD-124: the Theiler band is cleared one strided diagonal at a time. Checked against the integer mask it replaced, on random blocks of every shape and position, contiguous and not. |
 
-## 16. `test_report.py` — Run reports
+## 17. `test_report.py` — Run reports
 
 Sections, artefact registration, rendering, and that the report is in English.
 
@@ -446,7 +472,7 @@ Decisions: DD-37
 | `test_artifact_frame_columns` | Artifact frame columns. |
 | `test_report_text_is_english` | Report text is english. |
 
-## 17. `test_rqa.py` — test_rqa.py
+## 18. `test_rqa.py` — test_rqa.py
 
 | Test | What it checks |
 |---|---|
@@ -479,7 +505,7 @@ Decisions: DD-37
 | `test_the_sweep_does_not_warn_about_the_floors_it_is_testing` | DD-98. The sweep exists to find the floor at which a metric has room, so its whole job is to evaluate floors that do not work. Warning about each one produced as many warnings as floors, per subjec... |
 | `test_normalised_entropy_uses_admissible_lengths` | One rare long line must not move ENTR_norm by itself. |
 
-## 18. `test_scaling.py` — The scaling policy
+## 19. `test_scaling.py` — The scaling policy
 
 The analytic result the default rests on, and that the balance holds across five orders of magnitude of gain.
 
@@ -496,7 +522,7 @@ Decisions: DD-02
 | `test_lambda_rejects_bad_values` | Lambda rejects bad values. |
 | `test_gain_invariance_of_the_default` | A global gain change must not alter the geometry. |
 
-## 19. `test_signals.py` — The synthetic generator
+## 20. `test_signals.py` — The synthetic generator
 
 That the generated coupling is monotone in alpha against the canonical indices, and reproducible.
 
@@ -534,7 +560,7 @@ Decisions: DD-13, DD-48
 | `test_modulogram_wraps_the_phase_like_the_modulation_index` | A phase given in [0, 2*pi) must bin as the same phase in (-pi, pi]. |
 | `test_canonical_indices_flag_an_amplitude_that_is_not_an_envelope` | MVL and MI are defined on an envelope. A negative 'amplitude' warns, and MI refuses once a phase bin's mean amplitude is negative, because the divergence is then taken from something that is not a ... |
 
-## 20. `test_statespace.py` — State space construction
+## 21. `test_statespace.py` — State space construction
 
 The weight-folding identity, every constructor on all three routes, embedding estimation, scaling and transforms.
 
@@ -597,7 +623,7 @@ Decisions: DD-21, DD-23, DD-25, DD-28
 | `test_npy_channels_first_guess_is_announced` | DD-123, P3: reading a short wide .npy file as channels-first is a guess on the caller's behalf, so it warns and is recorded. |
 | `test_other_shapes_are_refused` | Other shapes are refused. |
 
-## 21. `test_threshold.py` — Threshold selection
+## 22. `test_threshold.py` — Threshold selection
 
 That every mode runs, that the target rate is met, and that Theiler-aware sampling behaves.
 
@@ -630,7 +656,7 @@ Decisions: DD-32, DD-35
 | `test_small_cross_thresholds_are_exact` | DD-122 for cross plots: a small one takes every pair once, so epsilon does not depend on the seed, and it stays off every cross distance. |
 | `test_per_block_rates_do_not_depend_on_the_weights` | DD-35, revised in 0.26: each block's epsilon is estimated on the coordinates the matrix compares, so every block sees the rate it was given. Estimated on the unweighted coordinates, the block weigh... |
 
-## 22. `test_validation.py` — test_validation.py
+## 23. `test_validation.py` — test_validation.py
 
 | Test | What it checks |
 |---|---|
@@ -661,7 +687,7 @@ Decisions: DD-32, DD-35
 | `test_every_measure_is_computable_on_a_short_window` | A measure that quietly fails at 250 points would read as one that detects nothing [DD-76]. |
 | `test_a_univariate_measure_cannot_tell_coupling_from_regularity` | DD-77. Nine block-wise measures separated PPC at AUC 1.000, beating PLV. They are computed on the gamma block alone and never see theta. Pairing a regular gamma phase with an *independent* theta mu... |
 
-## 23. `test_viz.py` — Figures
+## 24. `test_viz.py` — Figures
 
 That every registered figure renders from one object, that inputs are not mutated, and the language guards.
 
@@ -711,7 +737,7 @@ Decisions: DD-27, DD-30, DD-31, DD-38, DD-49..52
 | `test_a_matrix_renders_the_same_stored_or_streamed` _(×2)_ | Regression: with a size that is not a multiple of the reduction factor the stored path cropped the remainder and the streamed path kept it, so the images differed by a pixel and plot_joint_recurren... |
 | `test_the_joint_figure_draws_an_odd_sized_plot` | The joint figure draws an odd sized plot. |
 
-## 24. `test_windowed.py` — Windowed analysis
+## 25. `test_windowed.py` — Windowed analysis
 
 Window specification, threshold scope, laziness, every mode windowed, and the multi-record batch.
 

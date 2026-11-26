@@ -378,8 +378,11 @@ class RecurrenceMatrix:
 #: materialisation [DD-124]. The memory plan picks tiles as large as the
 #: budget allows (8192 x 8192 by default), which bounds memory but is slow to
 #: scan: at 5120 points one such tile took 35 ns per cell to compute, against 7
-#: in bands of about a million cells, which stay in cache.
-BAND_CELLS = 1 << 20
+#: in bands of about a million cells. 2**18 rather than 2**20 since 0.26: on a
+#: 20-core server running 20 workers at once, the larger bands no longer fit
+#: in the cache each worker gets, and a window of 10 240 points took 5.7 s
+#: instead of 4.5 s; alone, the two sizes are within 2% of each other.
+BAND_CELLS = 1 << 18
 
 
 def band_rows(n_rows: int, n_cols: int, tile_size: int | None = None) -> int:

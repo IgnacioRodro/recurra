@@ -1,36 +1,41 @@
 #!/usr/bin/env python3
 """Measure how fast recurrence plots and their RQA are computed, window by window.
 
-    python tools/benchmark_engine.py                       # sizes 1280..10240, 1 and all cores
-    python tools/benchmark_engine.py --sizes 1280 2560 --jobs 1 8 38 --out bench.csv
-    python tools/benchmark_engine.py --quick               # a smoke run, seconds
+    python tools/benchmark_engine.py                         # CPU: 1 core and all physical cores
+    python tools/benchmark_engine.py --jobs 1 8 20 --out bench.csv
+    python tools/benchmark_engine.py --engines numpy torch --devices cuda:0
+    python tools/benchmark_engine.py --quick                 # a smoke run, seconds
 
-Every number in the decision record about speed comes from this script, so it
-measures what an analysis does: many short windows of a three-dimensional
+Every number in the decision records about speed comes from this script, so it
+measures what an analysis does: many windows of a three-dimensional
 phase-amplitude trajectory, a threshold fixed per window at a 5% rate, the
-default line floors, the full RQA. Two measurements per window size:
+default line floors, the full RQA. For each window size:
 
-* **one window**, best of three: the time to estimate the threshold, and the
-  time to build the plot and accumulate its line histograms, which is where
-  the RQA spends its effort;
-* **throughput**: ``batch_windowed_recurrence(...).metrics(rqa=True,
-  n_jobs=k)`` over several records, as a study would call it, in windows per
-  second for every ``k`` asked for.
+* **one window** on the reference engine, best of three: the time to estimate
+  the threshold, and the time to build the plot and accumulate its line
+  histograms;
+* **batch_rqa** on every engine asked for: the numpy engine with each
+  ``n_jobs`` (worker processes), the torch engine on each device and in each
+  precision, in windows per second;
+* **windowed** (numpy engine only): ``batch_windowed_recurrence(...)``
+  ``.metrics(rqa=True)`` over several records, the other way a study calls it.
 
-The trajectories are synthetic, with fixed seeds, so runs on two machines
-measure the machines and not the data. Results go to a CSV file (one row per
-measurement, with the versions and the machine) and the printed table to a
-``.txt`` file next to it.
+Two GPUs are measured by running the script twice at once, one device each
+(``--devices cuda:0`` and ``--devices cuda:1``), as a study would run them.
 
-Thread counts: with several jobs, each worker should use one BLAS thread, or
-the workers fight over the cores. Set ``OPENBLAS_NUM_THREADS=1`` (and
-``MKL_NUM_THREADS=1`` with MKL) before running; the CSV records the BLAS
-thread count each run saw.
+The trajectories are synthetic, with fixed seeds. Each result is appended to
+the CSV file as soon as it is measured (with the versions and the machine),
+and the printed lines go to a ``.txt`` file next to it, so an interrupted run
+keeps what it measured.
+
+Thread counts: set ``OPENBLAS_NUM_THREADS=1`` (and ``MKL_NUM_THREADS=1`` with
+MKL) before running, or the worker processes fight over the cores.
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import importlib.util
 import os
 import pathlib
 import platform
@@ -42,10 +47,11 @@ import numpy as np
 
 import recurra as rc
 
-FIELDS = ["recurra", "engine", "device", "measurement", "n_points", "dim",
-          "records", "windows", "n_jobs", "seconds", "windows_per_s",
-          "threshold_s", "plot_and_histogram_s", "python", "numpy",
-          "cpu_count", "blas_threads", "platform"]
+FIELDS = ["recurra", "engine", "device", "precision", "measurement", "n_points",
+          "dim", "windows", "n_jobs", "seconds", "windows_per_s", "threshold_s",
+          "plot_and_histogram_s", "peak_device_memory_gb", "batch_size", "python",
+          "numpy", "torch", "cpu_count",
+          "physical_cores", "blas_threads", "platform"]
 
 
 def trajectory(n: int, seed: int) -> np.ndarray:
@@ -82,84 +88,138 @@ def one_window(n: int) -> tuple[float, float]:
     t_threshold = best_of(lambda: rc.threshold(X, target_rr=0.05, rng=0))
 
     def plot_and_histogram():
-        rm = rc.recurrence_plot(X, th, store="stream")
-        rc.rqa(rm)
+        rc.rqa(rc.recurrence_plot(X, th, store="stream"))
 
     return t_threshold, best_of(plot_and_histogram)
 
 
-def throughput(n: int, records: int, windows: int, n_jobs: int) -> float:
-    sources = {f"r{k:02d}": trajectory(n * windows, seed=100 + k)
-               for k in range(records)}
-    spec = rc.WindowSpec(size=n, step=n, unit="samples")
-    t0 = time.perf_counter()
-    batch = rc.batch_windowed_recurrence(sources, spec, target_rr=0.05, rng=0,
-                                         n_jobs=n_jobs)
-    table = batch.metrics(rqa=True, n_jobs=n_jobs)
-    seconds = time.perf_counter() - t0
-    if len(table) != records * windows:
-        raise RuntimeError(f"expected {records * windows} windows, got {len(table)}")
-    return seconds
+def windows_of(n: int, count: int) -> np.ndarray:
+    return trajectory(n * count, seed=100).reshape(count, n, 3).copy()
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--sizes", type=int, nargs="+", default=[1280, 2560, 5120, 10240],
                    help="points per window")
+    p.add_argument("--engines", nargs="+", default=["numpy"], choices=["numpy", "torch"])
     p.add_argument("--jobs", type=int, nargs="+", default=None,
-                   help="values of n_jobs for the throughput runs (default: 1 and all cores)")
-    p.add_argument("--records", type=int, default=None,
-                   help="records per throughput run (default: the largest n_jobs)")
-    p.add_argument("--windows", type=int, default=4, help="windows per record")
+                   help="n_jobs for the numpy engine (default: 1 and all physical cores)")
+    p.add_argument("--devices", nargs="+", default=["cuda:0"], help="torch devices")
+    p.add_argument("--precisions", nargs="+", default=["double", "mixed"],
+                   choices=["double", "single", "mixed"], help="torch precisions")
+    p.add_argument("--windows", type=int, default=None,
+                   help="windows per batch_rqa run (default: 10 x the largest n_jobs, "
+                        "at least 20, and 200 on a GPU)")
+    p.add_argument("--no-windowed", action="store_true",
+                   help="skip the batch_windowed_recurrence measurement")
     p.add_argument("--out", default="benchmark_engine.csv", help="CSV file to write")
     p.add_argument("--quick", action="store_true",
                    help="two small sizes and one job, to check the script runs")
     a = p.parse_args(argv)
 
     warnings.simplefilter("ignore", rc.RecurraWarning)
-    cores = os.cpu_count() or 1
-    if a.quick:
-        a.sizes, a.jobs, a.windows = [300, 600], [1], 2
-    jobs = a.jobs or sorted({1, cores})
-    records = a.records or max(jobs)
-    common = {"recurra": rc.__version__, "engine": "numpy", "device": "cpu",
-              "dim": 3, "python": platform.python_version(),
-              "numpy": np.__version__, "cpu_count": cores,
-              "blas_threads": blas_threads(), "platform": platform.platform()}
+    os.environ.setdefault("PYTHONWARNINGS", "ignore")       # for worker processes
+    from recurra.engine import physical_cores
 
-    rows, lines = [], []
+    cores = os.cpu_count() or 1
+    physical = physical_cores()
+    if a.quick:
+        a.sizes, a.jobs = [300, 600], [1]
+    jobs = a.jobs or sorted({1, physical})
+    if max(jobs) > 1 and importlib.util.find_spec("joblib") is None:
+        p.error('n_jobs > 1 needs joblib: pip install "recurra[parallel]"')
+    if "torch" in a.engines and importlib.util.find_spec("torch") is None:
+        p.error('the torch engine needs PyTorch: pip install "recurra[gpu]"')
+    torch_version = ""
+    if importlib.util.find_spec("torch") is not None:
+        import torch
+
+        torch_version = torch.__version__
+
+    out = pathlib.Path(a.out)
+    txt = out.with_suffix(".txt")
+    fh = out.open("w", newline="", encoding="utf-8")
+    writer = csv.DictWriter(fh, fieldnames=FIELDS)
+    writer.writeheader()
+    tx = txt.open("w", encoding="utf-8")
+    common = {"recurra": rc.__version__, "dim": 3, "python": platform.python_version(),
+              "numpy": np.__version__, "torch": torch_version, "cpu_count": cores,
+              "physical_cores": physical, "blas_threads": blas_threads(),
+              "platform": platform.platform()}
 
     def say(text: str) -> None:
         print(text, flush=True)
-        lines.append(text)
+        tx.write(text + "\n")
+        tx.flush()
 
-    say(f"recurra {rc.__version__}, numpy {np.__version__}, {cores} cores, "
-        f"BLAS threads {common['blas_threads']}")
+    def record(**row) -> None:
+        writer.writerow({**common, **row})
+        fh.flush()
+
+    say(f"recurra {rc.__version__}, numpy {np.__version__}, torch {torch_version or '-'}, "
+        f"{cores} logical cores ({physical} physical), BLAS threads {common['blas_threads']}")
     for n in a.sizes:
         t_th, t_plot = one_window(n)
-        rows.append({**common, "measurement": "one_window", "n_points": n,
-                     "records": 1, "windows": 1, "n_jobs": 1,
-                     "seconds": t_th + t_plot, "windows_per_s": 1.0 / (t_th + t_plot),
-                     "threshold_s": t_th, "plot_and_histogram_s": t_plot})
-        say(f"N={n:6d}  one window: threshold {t_th:.4f} s, plot + histograms "
-            f"{t_plot:.4f} s")
-        for k in jobs:
-            seconds = throughput(n, records, a.windows, k)
-            total = records * a.windows
-            rows.append({**common, "measurement": "throughput", "n_points": n,
-                         "records": records, "windows": total, "n_jobs": k,
-                         "seconds": seconds, "windows_per_s": total / seconds,
-                         "threshold_s": "", "plot_and_histogram_s": ""})
-            say(f"N={n:6d}  {total} windows, n_jobs={k:3d}: {seconds:8.2f} s, "
-                f"{total / seconds:8.2f} windows/s")
+        record(engine="numpy", device="cpu", precision="double",
+               measurement="one_window", n_points=n, windows=1, n_jobs=1,
+               seconds=t_th + t_plot, windows_per_s=1.0 / (t_th + t_plot),
+               threshold_s=t_th, plot_and_histogram_s=t_plot)
+        say(f"N={n:6d}  one window: threshold {t_th:.4f} s, plot + histograms {t_plot:.4f} s")
 
-    out = pathlib.Path(a.out)
-    say(f"written: {out} and {out.with_suffix('.txt')}")
-    with out.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=FIELDS)
-        writer.writeheader()
-        writer.writerows(rows)
-    out.with_suffix(".txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        if "numpy" in a.engines:
+            for k in jobs:
+                count = a.windows or (8 if a.quick else max(20, 10 * max(jobs)))
+                X = windows_of(n, count)
+                t0 = time.perf_counter()
+                rc.batch_rqa(X, rng=0, engine="numpy", n_jobs=k)
+                s = time.perf_counter() - t0
+                record(engine="numpy", device="cpu", precision="double",
+                       measurement="batch_rqa", n_points=n, windows=count, n_jobs=k,
+                       seconds=s, windows_per_s=count / s)
+                say(f"N={n:6d}  batch_rqa numpy, n_jobs={k:3d}: {count} windows in "
+                    f"{s:8.2f} s, {count / s:9.2f} windows/s")
+        if "torch" in a.engines:
+            for dev in a.devices:
+                for prec in a.precisions:
+                    count = a.windows or (8 if a.quick else 200)
+                    X = windows_of(n, count)
+                    rc.batch_rqa(X[:2], rng=0, engine="torch", device=dev,
+                                 precision=prec)                      # warm up
+                    t0 = time.perf_counter()
+                    table = rc.batch_rqa(X, rng=0, engine="torch", device=dev,
+                                         precision=prec)
+                    s = time.perf_counter() - t0
+                    prov = table.attrs["provenance"]
+                    peak = prov.get("peak_device_memory_gb")
+                    batch = prov.get("batch_size", {}).get(n)
+                    record(engine="torch", device=dev, precision=prec,
+                           measurement="batch_rqa", n_points=n, windows=count, n_jobs=1,
+                           seconds=s, windows_per_s=count / s,
+                           peak_device_memory_gb=peak, batch_size=batch)
+                    say(f"N={n:6d}  batch_rqa torch on {dev}, {prec}: {count} windows in "
+                        f"{s:8.2f} s, {count / s:9.2f} windows/s "
+                        f"(batches of {batch}, peak {peak} GB)")
+        if "numpy" in a.engines and not a.no_windowed:
+            for k in jobs:
+                records = max(k, 2)
+                per = 4 if a.quick else 10
+                sources = {f"r{r:02d}": trajectory(n * per, seed=200 + r)
+                           for r in range(records)}
+                spec = rc.WindowSpec(size=n, step=n, unit="samples")
+                t0 = time.perf_counter()
+                batch = rc.batch_windowed_recurrence(sources, spec, target_rr=0.05,
+                                                     rng=0, n_jobs=k)
+                batch.metrics(rqa=True, n_jobs=k, engine="numpy")
+                s = time.perf_counter() - t0
+                total = records * per
+                record(engine="numpy", device="cpu", precision="double",
+                       measurement="windowed", n_points=n, windows=total, n_jobs=k,
+                       seconds=s, windows_per_s=total / s)
+                say(f"N={n:6d}  windowed numpy, n_jobs={k:3d}: {total} windows in "
+                    f"{s:8.2f} s, {total / s:9.2f} windows/s")
+    say(f"written: {out} and {txt}")
+    fh.close()
+    tx.close()
     return 0
 
 

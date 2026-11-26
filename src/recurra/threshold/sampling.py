@@ -35,27 +35,26 @@ from ..core.points import as_points
 from ..exceptions import ParameterError
 
 
-def sample_pair_distances(X: np.ndarray, *, n_samples: int = 200_000,
-                          theiler: int = 0, rng: SeedLike = None,
-                          metric: str = "euclidean",
-                          max_attempts: int = 8) -> np.ndarray:
-    """Distances between random pairs of rows of X, excluding the Theiler band.
+def sample_pair_indices(n: int, *, n_samples: int = 200_000, theiler: int = 0,
+                        rng: SeedLike = None,
+                        max_attempts: int = 8) -> tuple[np.ndarray, np.ndarray]:
+    """The pairs ``(i, j)`` of ``n`` points the threshold estimate looks at.
 
-    The full N x N matrix is never formed. Pairs with |i - j| < theiler are
-    rejected and redrawn, so the sample matches the region over which the
-    recurrence rate is defined [DD-32, DD-115]. With ``theiler=0`` nothing is
-    rejected, self-pairs included, exactly as the matrix keeps its line of
-    identity. When there are no more admissible pairs than ``n_samples``,
-    every one is taken once instead, and ``rng`` is not used [DD-122].
+    Pairs with ``|i - j| < theiler`` are rejected and redrawn, so the sample
+    matches the region over which the recurrence rate is defined [DD-32,
+    DD-115]; with ``theiler=0`` nothing is rejected, self-pairs included,
+    exactly as the matrix keeps its line of identity. When there are no more
+    admissible pairs than ``n_samples``, every one is taken once instead, and
+    ``rng`` is not used [DD-122].
+
+    Separate from the distances so that another engine can compute them on
+    the same pairs, drawn by the same generator in the same order [DD-125].
     """
-    from ..recurrence.distance import pairwise_rows
-
     rng = resolve_rng(rng)
-    X = as_points(X, name="sample_pair_distances", warn=False)    # [DD-123]
-    n = X.shape[0]
-    if n < 2:
-        return np.array([], dtype=float)
     theiler = int(theiler)
+    empty = np.array([], dtype=np.int64)
+    if n < 2:
+        return empty, empty
 
     # Ordered pairs (i, j) with |i - j| >= theiler. Ordered, because i and j
     # are drawn independently below.
@@ -68,11 +67,10 @@ def sample_pair_distances(X: np.ndarray, *, n_samples: int = 200_000,
         )
     if n_valid <= n_samples:
         # Small enough to take every admissible pair once [DD-122].
-        i, j = admissible_pairs(n, theiler)
-        return pairwise_rows(X, i, j, metric=metric)
+        return admissible_pairs(n, theiler)
     k = int(n_samples)
 
-    out = []
+    chunks_i, chunks_j = [], []
     got = 0
     for _ in range(max_attempts):
         need = k - got
@@ -84,11 +82,32 @@ def sample_pair_distances(X: np.ndarray, *, n_samples: int = 200_000,
         ok = np.abs(i.astype(np.int64) - j.astype(np.int64)) >= theiler
         i, j = i[ok][:need], j[ok][:need]
         if i.size:
-            out.append(pairwise_rows(X, i, j, metric=metric))
+            chunks_i.append(i.astype(np.int64))
+            chunks_j.append(j.astype(np.int64))
             got += i.size
-    if not out:
+    if not chunks_i:
+        return empty, empty
+    return np.concatenate(chunks_i), np.concatenate(chunks_j)
+
+
+def sample_pair_distances(X: np.ndarray, *, n_samples: int = 200_000,
+                          theiler: int = 0, rng: SeedLike = None,
+                          metric: str = "euclidean",
+                          max_attempts: int = 8) -> np.ndarray:
+    """Distances between random pairs of rows of X, excluding the Theiler band.
+
+    The full N x N matrix is never formed. The pairs are those of
+    :func:`sample_pair_indices`: drawn at random, or every admissible pair
+    once when there are no more than ``n_samples`` [DD-32, DD-122].
+    """
+    from ..recurrence.distance import pairwise_rows
+
+    X = as_points(X, name="sample_pair_distances", warn=False)    # [DD-123]
+    i, j = sample_pair_indices(X.shape[0], n_samples=n_samples, theiler=theiler,
+                               rng=rng, max_attempts=max_attempts)
+    if not i.size:
         return np.array([], dtype=float)
-    return np.concatenate(out)
+    return pairwise_rows(X, i, j, metric=metric)
 
 
 def sample_cross_distances(X1: np.ndarray, X2: np.ndarray, *,

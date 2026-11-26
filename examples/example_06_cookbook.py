@@ -1302,3 +1302,11 @@ _panel_jrp = rc.joint_recurrence_plot([SS.split(["phase_theta"]), SS.split(["amp
                                       target_rr=0.10, rng=0)
 rc.save_figure(rc.plot_joint_recurrence(_panel_jrp), "cookbook_joint_recurrence.png")
 rc.save_figure(rc.plot_recurrence_panel(_meta), "cookbook_meta_recurrence_panel.png")
+
+
+# %% 108 -- many windows in one call, on whichever engine is best here [DD-125]
+_bn = SS.n_points // 3                                 # three windows of equal length
+_bw = np.stack([np.asarray(SS.weighted_coords)[k * _bn:(k + 1) * _bn] for k in range(3)])
+_bt = rc.batch_rqa(_bw, target_rr=0.05, rng=0, l_min=2, v_min=2)
+print(_bt[["window", "epsilon", "RR", "DET", "LAM"]].round(4).to_string(index=False))
+print("engine:", _bt.attrs["provenance"]["engine"], "on", _bt.attrs["provenance"]["device"])

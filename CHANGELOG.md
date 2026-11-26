@@ -4,11 +4,38 @@ All notable changes to this project. Language policy: English throughout [DD-30]
 
 ## [0.26.0.dev0] — unreleased
 
-Work towards the GPU backend of DD-16: first the measurement rules a second
-engine has to agree with, then the CPU path it will mirror. Changes that alter
-results are listed first.
+The GPU engine (DD-125), and what it needed first: the measurement rules a
+second engine has to agree with, and a CPU path fast enough to be worth
+comparing with. Changes that alter results are listed first.
+
+**New: the torch engine and `engine="auto"`** (DD-125)
+
+- `batch_rqa(windows, ...)`: the RQA of many windows in one call, one row per
+  window, each equal to the single-plot path with the same integer seed.
+- `engine="auto"` (the default of `batch_rqa` and of `metrics()`) runs on the
+  first CUDA device when PyTorch sees one and the windows have at least 512
+  points, and on the CPU otherwise; with a device present the choice is
+  announced once and always recorded in the provenance. `engine="torch"`
+  insists on the device and fails rather than fall back; `engine="numpy"` is
+  the reference.
+- The same answer by construction: thresholds bit for bit (the device sorts,
+  numpy does the deciding arithmetic), histograms count for count (integer
+  counts only, no matrix products, TF32 off and recorded), whatever the batch
+  size, band height or device. Precisions `double` (default), `single` and
+  `mixed` (single, with the cells near epsilon recomputed in double).
+- New `gpu` extra (PyTorch), `Config.gpu_memory_budget_gb`, `recurra doctor`
+  reports the CUDA devices, the choice of `auto` and the physical cores.
+  Installation and GPU tests: `docs/INSTALL.md`, sections 10 and 11.
+- Tests marked `cuda` run only where a GPU is; a `torch-cpu` CI job runs the
+  rest of the engine suite on every push.
 
 **Changes that alter results**
+
+- **Sampled distances add their coordinates in a fixed order** (DD-125).
+  `np.einsum`'s order depends on the numpy build and the processor (on one
+  machine it added coordinates 0 and 2 first); `pairwise_rows` now adds them
+  one after another, which another engine can reproduce. Some epsilons move
+  in their last bit.
 
 - **Epsilon is never an observed distance** (DD-122). A quantile very often
   *is* a sampled distance, and the matrix then decided that pair by the last
@@ -43,6 +70,15 @@ results are listed first.
 
 **Faster, same results**
 
+- **Worker processes by default** (DD-82 revised). `backend="auto"` meant
+  threads; on a 20-core server threads gave at most 4.2 times one core with 8
+  workers and less with 38, because RQA holds the interpreter lock, while
+  processes reached 11 to 13 times with 20 workers. Identical results. A
+  second hardware thread per core added nothing: use the physical cores.
+- Bands of 2**18 cells instead of 2**20 (DD-124): with 20 workers at once the
+  larger bands no longer fit in cache (5.75 against 4.51 s per window of
+  10 240 points).
+
 - **Line histograms by whole-array operations** (DD-124): full-width row
   bands, every run of a band found at once, the tile carry and the white-line
   rule of DD-56 and DD-57 applied with array masks. Identical counts to the
@@ -58,9 +94,10 @@ results are listed first.
 
 **Tests and tools**
 
-- `tools/benchmark_engine.py`: windows per second for a range of window sizes
-  and core counts, written to CSV with the machine and the versions. The
-  numbers in DD-124 come from it (`docs/data/benchmarks/`).
+- `tools/benchmark_engine.py`: windows per second for a range of window sizes,
+  core counts, engines, devices and precisions, appended to a CSV file as
+  each is measured, with the machine and the versions. The numbers in DD-124
+  come from it (`docs/data/benchmarks/`).
 - New tests against external references: thresholds against `scipy`'s
   `cdist`, band histograms against two independent implementations, band
   clearing against the integer mask it replaced.

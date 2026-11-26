@@ -34,7 +34,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from ..config import SeedLike, resolve_rng
+from ..config import SeedLike, get_config, resolve_rng
 from ..core.points import n_points
 from ..exceptions import CaveatWarning, ComparabilityWarning, ParameterError
 from ..provenance import Step, provenance_frame
@@ -190,7 +190,8 @@ class WindowedRecurrence:
                 dynamics: bool | Sequence[str] = False,
                 invariants: bool | Sequence[str] = False,
                 classical: bool = False,
-                dynamics_kwargs: dict | None = None) -> pd.DataFrame:
+                dynamics_kwargs: dict | None = None,
+                engine: str = "auto", device: str | None = None) -> pd.DataFrame:
         """One tidy row per window: geometry, threshold, rate and optionally RQA.
 
         ``l_min`` and ``v_min`` default to 8, the same floors as
@@ -203,6 +204,12 @@ class WindowedRecurrence:
         metric of :data:`recurra.METRIC_NAMES` is added as a column; pass a
         sequence to select. The line histograms are accumulated by streaming,
         so asking for RQA does not force any matrix into memory [DD-56].
+
+        ``engine`` and ``device`` choose where the histograms of recurrence
+        plots are computed: ``"auto"`` uses a CUDA device when PyTorch sees one
+        and says so, ``"numpy"`` is the reference, ``"torch"`` insists on the
+        device [DD-125]. The table is the same either way;
+        ``table.attrs["engine"]`` records which ran.
         """
         key = (bool(rqa) if isinstance(rqa, bool) else tuple(rqa), l_min, v_min,
                w_min, denominator,
@@ -214,11 +221,22 @@ class WindowedRecurrence:
         self._metrics_key = key
         rows = []
         warned_rescaled = False
+        device_hists, engine_info = ({}, None)
+        if rqa:
+            device_hists, engine_info = self._device_histograms(engine, device)
         for i, w in enumerate(self.windows):
             rm = self[i]
             th = rm.threshold
             values = hist = None
-            if rqa:
+            if rqa and i in device_hists:
+                from ..rqa.metrics import rqa_from_histogram
+
+                hist = device_hists[i]
+                values = rqa_from_histogram(hist, l_min=l_min, v_min=v_min,
+                                            w_min=w_min, denominator=denominator,
+                                            metrics="all" if rqa is True else list(rqa))
+                rm._rr = hist.recurrence_rate
+            elif rqa:
                 from ..rqa.metrics import rqa as _rqa
 
                 # Keep the histogram. Every RQA metric at every line-length
@@ -294,7 +312,46 @@ class WindowedRecurrence:
                 row[name] = getattr(rm, name)() if callable(getattr(rm, name, None)) else np.nan
             rows.append(row)
         self._metrics = pd.DataFrame(rows)
+        if engine_info is not None:
+            self._metrics.attrs["engine"] = engine_info
         return self._metrics
+
+    def _device_histograms(self, engine: str, device: str | None):
+        """The line histograms of every window on the torch engine, if it runs.
+
+        Returns ``({window: histogram}, provenance)``; an empty mapping when
+        the numpy engine is chosen. Recurrence plots with a scalar threshold
+        and a supported metric go to the device; anything else (cross and
+        joint plots, FAN or per-block thresholds) stays on the reference path
+        [DD-125].
+        """
+        from ..engine import resolve_engine
+
+        n_min = min(w.n_samples for w in self.windows) if self.windows else 0
+        choice = resolve_engine(engine, device, n_points=n_min)
+        if choice.engine != "torch":
+            return {}, choice.provenance()
+        from ..engine.torch_rqa import METRICS, device_histograms
+        from ..recurrence.core import TRANSLATION_INVARIANT
+
+        items = []
+        for i in range(len(self)):
+            rm = self[i]
+            th = rm.threshold
+            if (self.kind != "rp" or th.is_pointwise or th.is_per_block
+                    or rm.metric not in METRICS or rm.coords2 is not None):
+                continue
+            X = np.asarray(rm.coords, dtype=float)
+            offset = (X.mean(axis=0) if rm.metric in TRANSLATION_INVARIANT
+                      else np.zeros(X.shape[1]))
+            items.append((i, X - offset, float(th.scalar), int(rm.theiler), rm.metric))
+        precision = self.build_kwargs.get("precision", "double")
+        hists, info = device_histograms(
+            items, device=choice.device,
+            precision="single" if precision == "single" else "double",
+            device_memory_gb=get_config().gpu_memory_budget_gb)
+        return hists, {**choice.provenance(), **info,
+                       "windows_on_device": len(hists), "windows": len(self)}
 
     def meta_recurrence(self, metrics: Sequence[str] | None = None, **kwargs):
         """Recurrence plot of this analysis' per-window measurements.
@@ -598,7 +655,18 @@ class BatchWindowedRecurrence:  # noqa: D101 -- documented below
         fixed at build time [DD-81].
         """
         names = list(self.results)
-        if n_jobs in (None, 1, 0) or len(names) < 2:
+        on_device = False
+        if kw.get("rqa") and names:
+            # Worker processes would each open the GPU; with the torch engine
+            # the records go one after another and the device batches their
+            # windows instead [DD-125].
+            from ..engine import resolve_engine
+
+            first = self.results[names[0]]
+            n_min = min((w.n_samples for w in first.windows), default=0)
+            on_device = resolve_engine(kw.get("engine", "auto"), kw.get("device"),
+                                       n_points=n_min, announce=False).engine == "torch"
+        if n_jobs in (None, 1, 0) or len(names) < 2 or on_device:
             frames = [self._one(name, **kw) for name in names]
         else:
             from ..parallel.runner import parallel_map

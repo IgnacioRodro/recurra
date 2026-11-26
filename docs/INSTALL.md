@@ -359,3 +359,69 @@ rm = rc.recurrence_plot(ss, th, theiler=1)
 print(rm.summary())
 rc.plot_recurrence(rm)
 ```
+
+## 10. The GPU engine [DD-125]
+
+recurra computes on a GPU through PyTorch when one is there: with
+`engine="auto"`, the default of `batch_rqa` and of `metrics()`, it uses the
+first CUDA device PyTorch can see and says so once; without one it uses the
+CPU. Nothing else changes, and the results are the same.
+
+**Which PyTorch.** PyTorch publishes a build per CUDA version, and the right
+one is set by the NVIDIA driver. Run `nvidia-smi`: the top right corner says
+`CUDA Version: 13.0` (for example), the newest CUDA the driver supports.
+Install the PyTorch build for that version or an older one, *before*
+recurra, from PyTorch's own index:
+
+```bash
+nvidia-smi                                                   # e.g. CUDA Version: 13.0
+pip install torch --index-url https://download.pytorch.org/whl/cu130
+pip install "recurra[gpu]"          # or, from the source: pip install -e ".[all,dev]"
+```
+
+The index names are `cu126`, `cu128`, `cu130`, `cu132`, ... and pytorch.org
+lists the current ones. `pip install "recurra[gpu]"` alone also works: it
+takes PyTorch's default build from PyPI, which suits a recent driver.
+
+**Check it.** `recurra doctor` lists the CUDA devices, their memory, and what
+`engine="auto"` will choose:
+
+```
+  torch 2.15.0+cu130, built for CUDA 13.0
+  cuda:0: NVIDIA GeForce RTX 3090, 25.4 GB, 25.1 GB free
+  cuda:1: NVIDIA GeForce RTX 3090, 25.4 GB, 25.1 GB free
+  engine='auto' -> torch on cuda:0 (a CUDA device is available)
+```
+
+**Two GPUs, and the CPU workers.** One call uses one device. To use two, run
+two processes, each with its own device: `device="cuda:1"` in the second, or
+`CUDA_VISIBLE_DEVICES=1` before starting it (the device it sees is then
+`cuda:0`). On the GPU, `n_jobs` is not used; on the CPU, set it to the number
+of physical cores, not of hardware threads: a second thread per core gave
+nothing for this work [DD-82].
+
+**Memory.** The engine sizes its batches to `Config.gpu_memory_budget_gb`
+(8 GB by default) or to `device_memory_gb=` in the call, and refuses with the
+numbers rather than run out of memory.
+
+## 11. Running the GPU tests
+
+The tests marked `cuda` need a CUDA device and are skipped everywhere else,
+continuous integration included. On a machine with a GPU, in an environment
+with PyTorch and recurra installed from the source:
+
+```bash
+cd recurra
+python -m pytest -m cuda -rs            # the GPU battery: equivalence, determinism, both GPUs
+python -m pytest tests/test_engine.py   # the whole engine suite, CPU and GPU
+python -m pytest -m "not slow" -n 20    # and the fast suite, as before
+```
+
+`-rs` lists what was skipped and why: with one GPU, the test that compares
+two devices is skipped. Then the benchmark, which writes a CSV file:
+
+```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  python tools/benchmark_engine.py --engines numpy torch --jobs 1 20 \
+  --devices cuda:0 --out benchmark_gpu.csv
+```

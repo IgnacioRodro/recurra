@@ -66,11 +66,13 @@ def parallel_map(func: Callable[..., Any], items: Sequence[Any], *,
     from ``rng`` by position before any work starts, so the result cannot
     depend on ``n_jobs`` [DD-81].
 
-    ``backend="process"`` gives true parallelism for numpy-bound work at the
-    cost of pickling the arguments; ``"thread"`` avoids that but only helps
-    where the work releases the interpreter lock, which the BLAS-backed
-    distance kernels do. ``"auto"`` picks threads, which is the safer default
-    here because a state space can be large to pickle.
+    ``backend="process"`` gives true parallelism at the cost of starting the
+    workers and pickling the arguments; ``"thread"`` avoids that but only helps
+    where the work releases the interpreter lock. ``"auto"`` picks processes:
+    measured on a 20-core server, threads gave at most 4.2 times one core with
+    8 workers and less with 38, because recurrence quantification spends most
+    of its time holding the lock, while processes reached 11 to 13 times one
+    core [DD-82, revised in 0.26].
     """
     if backend not in BACKENDS:
         raise ParameterError(f"backend must be one of {BACKENDS}, got {backend!r}")
@@ -87,7 +89,7 @@ def parallel_map(func: Callable[..., Any], items: Sequence[Any], *,
         return out
 
     joblib = _require_joblib()
-    prefer = "threads" if backend in ("auto", "thread") else "processes"
+    prefer = "threads" if backend == "thread" else "processes"       # [DD-82]
     with joblib.parallel_backend("loky" if prefer == "processes" else "threading",
                                  n_jobs=n):
         return list(joblib.Parallel(n_jobs=n, verbose=10 if progress else 0)(
