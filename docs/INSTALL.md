@@ -26,9 +26,18 @@ import sys; print(sys.version)
 
 ## 2. Install
 
-Unzip the package somewhere stable — **not** inside a synced folder that
-rewrites files, and not inside the folder you will run scripts from, to avoid
-shadowing. Then, from a terminal (Anaconda Prompt on Windows):
+To use a released version without the source, install it straight from
+GitHub, pinned to its tag (this is the form to put in an analysis project's
+requirements, so that the analysis can be reproduced later):
+
+```bash
+pip install "recurra[viz] @ git+https://github.com/IgnacioRodro/recurra.git@v0.25.0"
+```
+
+To work with the source, get it from GitHub (`git clone`, or **Code →
+Download ZIP** and unzip) somewhere stable — **not** inside a synced folder
+that rewrites files, and not inside the folder you will run scripts from, to
+avoid shadowing. Then, from a terminal (Anaconda Prompt on Windows):
 
 ```bash
 cd path/to/recurra
@@ -104,18 +113,18 @@ environment as in section 2.
 ## 9. Verified environments
 
 The dependency floors in `pyproject.toml` are a claim about what works, so
-they are checked rather than assumed. The full suite has been run on both ends
-of the declared range:
+they are checked rather than assumed. On every push, CI runs the fast suite:
 
-| | Python | numpy | scipy | pandas | Platform | Result |
-|---|---|---|---|---|---|---|
-| floor | 3.10.9 | 1.26.4 | 1.10.0 | 1.5.3 | Windows (Anaconda) | 281 passed |
-| current | 3.12.3 | 2.4.4 | 1.17.1 | 3.0.2 | Linux | 281 passed |
+| Job | Python | numpy, scipy, pandas | Platforms |
+|---|---|---|---|
+| `minimum-versions` | 3.10 | exactly the floors: 1.24, 1.10, 1.5 | Linux |
+| `test` | 3.10, 3.11, 3.12, 3.13, 3.14 | current releases | Linux, macOS, Windows |
+| `core-only` | 3.12 | current releases, no optional extra | Linux |
 
-The versions between are untested but the library uses no API that changed
-across them; a `minimum-versions` CI job pins the floors and runs the suite, so
-if that stops being true it will show up rather than being discovered by a
-user.
+The slow validation suite runs weekly and on demand (`slow.yml`). The versions
+between the floors and the current releases are not each tested, but the
+library uses no API that changed across them; if that stops being true, one of
+these jobs shows it rather than a user discovering it.
 
 **Practical consequence:** an Anaconda base environment from 2023 (Python
 3.10, pandas 1.5) needs **no package upgrades**. Installing there will not
@@ -133,10 +142,10 @@ print(rc.__version__)
 print(rc.doctor())
 ```
 
-Expected:
+Expected (the first line shows the version you installed):
 
 ```
-recurra 0.25.0.dev0
+recurra 0.25.0
   OK  numpy
   OK  scipy
   OK  pandas
@@ -157,11 +166,12 @@ cd path/to/recurra
 pytest -q
 ```
 
-609 test cases (513 test functions) should pass. `pytest -m "not slow"` runs
-the 579 fast ones; on a laptop that takes about ten minutes, on a slower
-machine up to forty. The fifteen EDF reader tests need the `io` extra
-(`pyedflib`) and are skipped without it. The 30 slow ones regenerate corpora to re-derive measured
-findings.
+Every test should pass. `pytest -m "not slow"` runs the fast ones; on a
+laptop that takes about ten minutes, on a slower machine up to forty. The EDF
+reader tests need the `io` extra (`pyedflib`) and are skipped without it, as
+are other tests whose optional backend is missing (`-rs` lists them).
+`pytest -m slow` runs the slow ones, which regenerate corpora to re-derive
+measured findings and take much longer.
 
 ---
 

@@ -789,7 +789,7 @@ wr = rc.windowed_recurrence(ss, spec, target_rr=0.05, keep=True)   # cached
 
 ---
 
-### 8b.4 Figures that explain a recurrence plot [DD-120]
+### 8b.7 Figures that explain a recurrence plot [DD-120]
 
 ```python
 rc.plot_recurrence_panel(rm)                       # RP with its trajectory along both margins
@@ -804,7 +804,7 @@ rc.save_figure(rc.plot_recurrence_panel(rm), "panel.png")    # drawing never sav
 The line of identity runs from bottom left to top right in these figures,
 the classical orientation, so time increases upward along the left margin.
 
-### 8b.5 Meta-recurrence: the recurrence of the window measurements [DD-119]
+### 8b.8 Meta-recurrence: the recurrence of the window measurements [DD-119]
 
 A windowed analysis gives one row of measurements per window. That sequence
 is itself a multivariate time series, one sample per window, and

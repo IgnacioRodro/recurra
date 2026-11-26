@@ -11,6 +11,7 @@ checked mechanically are checked here:
 * every module in the package appears in the architecture map
 * every registered figure appears in the figure catalogue
 * the test count quoted in the documents matches reality
+* the version agrees across the package, the changelog and the citation file
 * every example script the README advertises exists and is runnable
 
 This cannot verify that the prose is *true*. It can verify that it is not
@@ -33,6 +34,8 @@ SRC = pathlib.Path(recurra.__file__).parent
 DECISIONS = DOCS / "DESIGN_DECISIONS.md"
 ARCHITECTURE = DOCS / "ARCHITECTURE.md"
 EXAMPLES = DOCS / "EXAMPLES.md"
+README = ROOT / "README.md"
+CITATION = ROOT / "CITATION.cff"
 
 
 def _read(path: pathlib.Path) -> str:
@@ -113,17 +116,22 @@ def _count_test_functions() -> int:
 
 
 def test_architecture_quotes_the_real_test_count():
-    """A stale count is the first sign a document stopped being maintained."""
-    text = _read(ARCHITECTURE)
-    quoted = re.search(r"\*\*(\d+) test functions, all green\*\*", text)
-    assert quoted, (
-        "the architecture document must state '**N test functions, all green**'"
-    )
+    """A stale count is the first sign a document stopped being maintained.
+
+    The count is written in two places, the architecture document and the
+    README's status line, and both are checked. Nowhere else quotes one: the
+    README, INSTALL and ROADMAP once carried counts several versions old,
+    because nothing checked them.
+    """
     actual = _count_test_functions()
-    assert int(quoted.group(1)) == actual, (
-        f"architecture says {quoted.group(1)} test functions, the suite declares "
-        f"{actual}. Update docs/ARCHITECTURE.md."
-    )
+    for path in (ARCHITECTURE, README):
+        text = _read(path)
+        quoted = re.search(r"\*\*(\d+) test functions, all green\*\*", text)
+        assert quoted, f"{path.name} must state '**N test functions, all green**'"
+        assert int(quoted.group(1)) == actual, (
+            f"{path.name} says {quoted.group(1)} test functions, the suite "
+            f"declares {actual}. Update {path.name}."
+        )
 
 
 def test_figure_catalogue_lists_every_registered_figure():
@@ -138,6 +146,13 @@ def test_figure_catalogue_lists_every_registered_figure():
             f"comparison figure compare_{name} is registered but missing from the "
             "architecture catalogue"
         )
+    # The README's status table quoted 17 single figures long after there were 22.
+    quoted = re.search(r"Figures: (\d+) single \+ (\d+) comparison", _read(README))
+    assert quoted, "README.md must state 'Figures: N single + M comparison'"
+    assert (int(quoted.group(1)), int(quoted.group(2))) == (
+        len(SINGLE_FIGURES), len(COMPARISON_FIGURES)), (
+        f"README.md says {quoted.group(1)} single and {quoted.group(2)} comparison "
+        f"figures; {len(SINGLE_FIGURES)} and {len(COMPARISON_FIGURES)} are registered")
 
 
 # --------------------------------------------------------------- examples
@@ -174,9 +189,19 @@ def test_examples_document_covers_the_public_api():
 
 # ------------------------------------------------------------- changelog
 def test_changelog_mentions_the_current_version():
+    """The newest heading says what the version is: a development version is
+    `unreleased`, a release carries the date it was tagged."""
     text = _read(ROOT / "CHANGELOG.md")
-    assert "unreleased" in text.lower()
-    assert re.search(r"^## \[\d+\.\d+\.\d+", text, re.M), "no version heading found"
+    newest = re.search(r"^## \[(\d+\.\d+\.\d+(?:\.dev\d+)?)\] — (.+)$", text, re.M)
+    assert newest, "no version heading of the form '## [X.Y.Z] — ...' found"
+    version, label = newest.group(1), newest.group(2).strip()
+    if ".dev" in version:
+        assert label.startswith("unreleased"), (
+            f"{version} is a development version, so its heading should say "
+            f"'unreleased', not {label!r}")
+    else:
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", label), (
+            f"release {version} should carry its date as YYYY-MM-DD, not {label!r}")
 
 
 # --------------------------------------------------------------- cookbook
@@ -315,7 +340,26 @@ def test_the_version_is_not_stale():
         "the version has not moved since the first build")
     # and the changelog's newest entry must name it
     changelog = pathlib.Path(__file__).resolve().parents[1] / "CHANGELOG.md"
-    newest = re.search(r"^## \[([^\]]+)\]", changelog.read_text(encoding="utf-8"), re.M)
+    text = changelog.read_text(encoding="utf-8")
+    newest = re.search(r"^## \[([^\]]+)\]", text, re.M)
     assert newest and newest.group(1) == rc.__version__, (
         f"CHANGELOG heads at {newest.group(1) if newest else None} but the "
         f"package says {rc.__version__}")
+    # and the citation file must name the latest release, with its date: it
+    # said 0.25.0.dev0 with nothing checking it. Between releases it keeps
+    # naming the last one, which is what a citation should point to.
+    citation = changelog.parent / "CITATION.cff"
+    if not citation.exists():
+        pytest.skip("CITATION.cff not present in this layout")
+    released = re.search(r"^## \[(\d+\.\d+\.\d+)\] — (\d{4}-\d{2}-\d{2})\s*$",
+                         text, re.M)
+    assert released, "the changelog has no dated release heading"
+    cff = citation.read_text(encoding="utf-8")
+    cited = re.search(r'^version:\s*"?([^"\n]+?)"?\s*$', cff, re.M)
+    dated = re.search(r'^date-released:\s*"?([^"\n]+?)"?\s*$', cff, re.M)
+    assert cited and cited.group(1) == released.group(1), (
+        f"CITATION.cff cites {cited.group(1) if cited else None}; the latest "
+        f"release in the changelog is {released.group(1)}")
+    assert dated and dated.group(1) == released.group(2), (
+        f"CITATION.cff dates the release {dated.group(1) if dated else None}; "
+        f"the changelog says {released.group(2)}")

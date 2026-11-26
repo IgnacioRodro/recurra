@@ -1,12 +1,13 @@
 name: CI
 on: [push, pull_request]
 
-# Five jobs, each answering one question:
+# Six jobs, each answering one question:
 #   lint             is the code clean to the pinned ruff version?
 #   test             does the full fast suite pass, with every extra, on each OS and Python?
 #   core-only        does the core work with nothing optional installed? [P6, DD-17]
 #   minimum-versions are the declared dependency floors true?
 #   coverage         which lines does no test execute?
+#   build            does the wheel a user installs build, install and run?
 # The slow validation tests live in slow.yml: they re-derive measured findings
 # and take tens of minutes, so they run weekly and on demand, not on every push.
 
@@ -79,3 +80,23 @@ jobs:
       - run: pip install -e ".[io,ml,viz,parallel,dev]"
       - run: python -m coverage run --source=src/recurra -m pytest -m "not slow"
       - run: python -m coverage report -m --skip-covered
+
+  build:
+    # Every other job installs the source tree in editable mode, so none of them
+    # would notice a wheel that leaves a module out. This one builds the sdist
+    # and the wheel, installs the wheel into an empty virtual environment and
+    # runs it from outside the source tree.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build
+      - run: python -m venv /tmp/clean
+      - run: /tmp/clean/bin/pip install dist/*.whl
+      - run: /tmp/clean/bin/python -c "import recurra; print(recurra.__version__, recurra.__file__)"
+        working-directory: /tmp
+      - run: /tmp/clean/bin/recurra doctor
+        working-directory: /tmp

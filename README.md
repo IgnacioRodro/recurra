@@ -11,15 +11,18 @@ Recurrence analysis over **arbitrary state spaces**, for multivariate signals an
 
 Unlike existing RQA libraries, the phase space is not necessarily built by Takens delays: it can be defined from observable variables — for instance `s(t) = (cos φ_low, sin φ_low, A_high)` for PAC — or by combining both routes. Nothing forces the coupling reading: the same engine serves signals with no coupling at all.
 
-> **Status: pre-alpha, 0.25.0.dev0.** Every phase except F11 (higher-order tensors) and F12 (Costas arrays) is implemented and tested: 513 test functions, 609 cases. The library has carried one complete real study, a 49-child EEG corpus. What remains is listed in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> **Status: pre-alpha; latest release 0.25.0.** Every phase except F11 (higher-order tensors) and F12 (Costas arrays) is implemented and tested: **513 test functions, all green**. The library has carried one complete real study, a 49-child EEG corpus. What remains is listed in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ---
 
 ## Installation
 
 ```bash
+# a release, pinned (recommended for analyses that must be reproducible)
+pip install "recurra[viz] @ git+https://github.com/IgnacioRodro/recurra.git@v0.25.0"
+# the development version
 pip install "git+https://github.com/IgnacioRodro/recurra.git"
-# development
+# working on the library itself
 git clone https://github.com/IgnacioRodro/recurra.git && cd recurra
 pip install -e ".[dev]"
 ```
@@ -27,8 +30,9 @@ pip install -e ".[dev]"
 Extras: `io` (EDF/HDF5) · `ml` (scikit-learn) · `viz` (matplotlib, Pillow) · `parallel` (joblib) · `dev` · `all`
 
 The core needs only `numpy>=1.24`, `scipy>=1.10` and `pandas>=1.5`. Both ends of
-that range are verified by running the full suite: Python 3.10.9 with pandas
-1.5.3 on Windows, and Python 3.12.3 with pandas 3.0.2 on Linux.
+that range are checked on every push: one CI job runs the suite at exactly
+those floors on Python 3.10, the others with current releases on Python 3.10
+to 3.14, on Linux, macOS and Windows.
 
 ---
 
@@ -126,8 +130,9 @@ regenerates these.
 | Plain-text run reports | ✅ |
 | **Windowed RP/CRP/JRP with overlap** | ✅ |
 | Multi-subject batch, lazy matrices | ✅ |
+| Meta-recurrence: RP, CRP and JRP of the window measurements | ✅ |
 | Comparability contracts and group separation | ✅ |
-| Figures: 17 single + 8 comparison | ✅ |
+| Figures: 22 single + 8 comparison | ✅ |
 | RQA: 14 metrics, streamed line histograms | ✅ |
 | CRQA: lag and direction from a cross plot | ✅ |
 | Dynamical measures: D₂, λ₁, K₂, fractals, entropies, Hjorth, LZ | ✅ |
@@ -152,6 +157,7 @@ regenerates these.
 - [`docs/TESTS.md`](docs/TESTS.md) — what every test checks, in execution order
 - [`docs/EXAMPLE_INDEX.md`](docs/EXAMPLE_INDEX.md) — what every example produces, figure by figure
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — what is pending, what should migrate into the library, release checklist
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — the rules the project follows, for anyone changing it
 
 ---
 
@@ -170,8 +176,8 @@ regenerates these.
 ## Tests
 
 ```bash
-pytest -m "not slow"   # 514 tests in about 8 minutes
-pytest                 # all 545, including the validation findings
+pytest -m "not slow"   # the fast suite: minutes
+pytest -m slow         # the validation findings, re-derived: much longer
 ```
 
 Ground-truth tests included: RMS pairwise distance of the unit circle = √2 (analytic), coupling strength monotone against MVL and MI (Spearman ρ = 1.00), embedding dimension **m = 3** recovered for Lorenz via AMI + normalised FNN, a pure sine giving dense diagonals exactly at multiples of its period, **bit-for-bit** equivalence between tiled streaming and the dense computation, and a windowed joint-recurrence index that ranks eight subjects perfectly against their true coupling strength (Spearman +1.000), two-group separation on twenty subjects at mean AUC 0.972, line histograms identical to a dense reference across 48 combinations, DET matching its analytic value for white noise, and the correlation dimension of Lorenz recovered as 2.012 against a reference of 2.05.

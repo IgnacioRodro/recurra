@@ -9,7 +9,8 @@ authors:
   - family-names: "Ortiz Garcia"
     given-names: "Andres"
 license: MIT
-version: "0.25.0.dev0"
+version: "0.25.0"
+date-released: "2026-11-26"
 repository-code: "https://github.com/IgnacioRodro/recurra"
 keywords:
   - recurrence plot

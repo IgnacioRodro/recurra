@@ -8,10 +8,11 @@ before a public release. Decisions referenced by ID live in
 [`DESIGN_DECISIONS.md`](DESIGN_DECISIONS.md); the module map and the status of
 every module live in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-State at 0.25.0.dev0: 513 test functions (609 cases); every phase except
-F11 and F12 implemented; one complete real study carried end to end (49
-children, 32-channel EEG at 500 Hz, two recording blocks, delta and theta
-envelope dynamics, subject-level classification).
+State at the 0.25.0 release: every phase except F11 and F12 implemented and
+tested (the test count lives in [`ARCHITECTURE.md`](ARCHITECTURE.md), where a
+test keeps it true); one complete real study carried end to end (49 children,
+32-channel EEG at 500 Hz, two recording blocks, delta and theta envelope
+dynamics, subject-level classification).
 
 ---
 
@@ -24,7 +25,7 @@ envelope dynamics, subject-level classification).
 | I7 | `ingest` a precomputed recurrence matrix | Capability `RECURRENCE` without a state space; RQA must run on it |
 | I10 | `ingest` a `Corpus` object | `read_corpus` already returns a `CorpusIndex`; the missing piece is passing it straight to the batch layer |
 | I11 | Memory-mapped, lazy raw data | For corpora that do not fit in memory; the recurrence layer is already lazy |
-| DD-16 | GPU backend (PyTorch) | Decision still `provisional`; the `gpu` extra is declared but no kernel uses it |
+| DD-16 | GPU backend (PyTorch) | Decision still `provisional`. No kernel exists, so the `gpu` extra was withdrawn in 0.25. Planned for 0.26: batches of windows per call, line histograms computed on the device, results that do not depend on batch size, tile size or device |
 | F6 leftovers | RQA measures `T1`, `T2`, `TREND`, `CLEAR`; recurrence-network measures (transitivity, clustering, average path length) | Planned with the line histograms and never written |
 | Validation | DET and LAM against published reference values for the standard systems | D2 and lambda_1 of Lorenz are already checked |
 | DD-54, DD-60 | Two decisions still `provisional` | The joint independence ratio as a coupling detector in time; RQA against the geometric index. Both measured on synthetic data only |
@@ -189,68 +190,53 @@ Each of these cost time in the study and should become a warning or a default.
 
 ## 4. Housekeeping before a public repository
 
-- **Nine failing slow tests**, all pre-existing in 0.24.0.dev0 and measured
-  for this release (see the 0.24.0 entry of `CHANGELOG.md`). CI runs the slow
-  tests, so they block a green first push. Proposed fixes, to be validated:
+Done for 0.25.0:
 
-  1. *Seven validation tests do not pin their line floors.* They re-derive
-     findings measured at `l_min = v_min = 2` (DD-65, DD-67, DD-70, DD-77) and
-     call `rqa()` with its defaults, moved to 8 by DD-98. Fix: pass
-     `l_min=2, v_min=2` explicitly in those calls and say why in the
-     docstrings. Verified: with the floors injected, 27 of the 28 slow
-     validation tests pass. Test-only change; the findings stand.
-  2. *Fine-scale decimation can leave too few samples* (DD-99). On a 250-point
-     window it leaves 9, and every fractal and entropy measure fails as too
-     short. Fix in `dynamics/complexity.py` (`fine_scale_factor`) or in
-     `dynamics_measures`: cap the factor so that at least a minimum number of
-     samples remains (for instance 64), record the cap in the diagnostics, and
-     add a fast test for it. Library change; needs its own DD entry or a
-     revision note on DD-99.
-  3. *The averaging test of DD-101 is underpowered.* Measured over twelve
-     seeds on the same Lorenz series:
+- **The nine failing slow tests.** Seven validation tests now pin the line
+  floors and the Theiler window their findings were measured under, in one
+  place at the top of `tests/test_validation.py` [DD-98]. Fine-scale
+  decimation keeps at least 64 samples [DD-99]. The Lyapunov tests are
+  contracts over several trajectories rather than facts about one [DD-101].
+- **Lint.** `ruff check src tests examples tools` is clean with the ruff
+  version pinned in the `dev` extra.
+- **Licence** (MIT), **citation** (`CITATION.cff`), **logo**.
+- **Contributing.** [`CONTRIBUTING.md`](../CONTRIBUTING.md) restates the rules
+  the project follows.
+- **Repository URL.** `github.com/IgnacioRodro/recurra` is the final name.
+- **Counts that rot.** Test counts are stated only where a test checks them:
+  `ARCHITECTURE.md` and the status line of `README.md`.
 
-     | seeds | SD, one sampling | SD, three samplings averaged |
-     |---|---|---|
-     | first 4 | 0.054 | 0.088 |
-     | first 8 | 0.115 | 0.089 |
-     | all 12 | 0.138 | 0.119 |
+Still open:
 
-     Means 0.932 and 0.928 against a reference of 0.906. Averaging helps, by
-     about 14% in spread rather than the 42% three independent draws would
-     give, so the samplings are correlated. Fix: twelve seeds in the test
-     (about six minutes instead of one and a half), keep the assertion on the
-     mean, and revise DD-101 to state the measured narrowing.
-
-- **License.** Done in 0.25: MIT (`LICENSE`, `pyproject.toml`).
-- **Lint.** CI runs `ruff check src tests`. With ruff 0.16 it reports 183
-  findings, almost all style (`B905` zip without `strict`, `UP037`/`UP035`
-  modernised annotations and imports, `NPY002` legacy random calls in tests,
-  `F401` unused imports, `E702`, `I001`). Pin the ruff version in the `dev`
-  extra, apply the safe fixes in one commit, review the rest, and run the full
-  suite after. The single substantive finding (an undefined name in an
-  annotation) is fixed in 0.24.0.
-- **Citation.** Done in 0.25: `CITATION.cff` (appreciated, not required); add the paper when it is out.
-- **Contributing.** A short `CONTRIBUTING.md` restating the rules the project
-  already follows: English throughout [DD-30]; every decision with
-  consequences gets a DD entry; the documents are kept in step by
-  `tests/test_docs.py` [DD-45]; regenerate `docs/TESTS.md` with
-  `python tools/generate_test_index.py` after adding tests.
-- **Repository URL.** `README.md` installs from
-  `github.com/IgnacioRodro/recurra`; check that it is the final name.
-- **Packaging.** `pip install .` builds with hatchling; test a wheel in a clean
-  environment, then publish to TestPyPI before PyPI.
+- **PyPI.** The wheel builds and installs in a clean environment, and CI
+  checks that on every push. Before publishing, the images in `README.md`
+  need absolute URLs (PyPI does not resolve relative paths), then TestPyPI
+  before PyPI. Planned after the GPU backend.
 
 ---
 
 ## 5. Release checklist
 
-1. `pytest` (all 545 cases, including the slow ones) on Linux, macOS and
-   Windows through CI, plus the `minimum-versions` job. Slow tests are not
-   optional: nine of them broke unnoticed between 0.22 and 0.24 because they
-   were never re-run after DD-98 and DD-99.
-2. `ruff check src tests` clean.
-3. `python tools/generate_test_index.py` and commit `docs/TESTS.md` if it changed.
-4. Bump `src/recurra/_version.py`; the newest `CHANGELOG.md` heading must name
-   the same version (`test_the_version_is_not_stale` enforces it).
-5. Run `python examples/run_all.py --skip 6` and look at the outputs.
-6. Tag `vX.Y.Z`, build, upload.
+Before tagging `vX.Y.Z`:
+
+1. **Version.** `src/recurra/_version.py` says `X.Y.Z`; the newest heading of
+   `CHANGELOG.md` is `## [X.Y.Z] — YYYY-MM-DD`; `CITATION.cff` has the same
+   `version` and `date-released`. `tests/test_docs.py` checks all three.
+2. **Fast suite, lint, documents.** Every CI job green on the last push: lint,
+   the fast suite on Linux, macOS and Windows for every supported Python,
+   core-only, minimum-versions, coverage and build.
+3. **Slow suite.** Run *Slow validation* by hand (Actions → Slow validation →
+   Run workflow) and wait for it to pass. Not optional: nine slow tests broke
+   unnoticed between 0.22 and 0.24 because they were never re-run after a
+   default changed.
+4. **Examples, all of them.** `python examples/run_all.py`, without `--skip`.
+   The cookbook is the slowest and the one that finds bugs: an odd-sized
+   matrix (1157 points) exposed a figure failure that every test, built on
+   round sizes, had missed.
+5. **Test index.** `python tools/generate_test_index.py`, and commit
+   `docs/TESTS.md` if it changed.
+6. **Tag.** GitHub → Releases → Draft a new release, tag `vX.Y.Z`, the
+   `CHANGELOG.md` entry as the description.
+7. **Move `main` on.** Straight after the tag, set the version to the next
+   `.dev0` with a new `unreleased` heading, so that nothing installed from
+   `main` can be mistaken for the release.

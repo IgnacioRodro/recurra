@@ -479,6 +479,8 @@ The tile abstraction of [DD-36] is what makes this a backend swap rather than a 
 
 **Note (0.25).** Not implemented. The `gpu` extra installed PyTorch for a backend that does not exist, so it is withdrawn until the backend is written; `available_backends()` still reports whether torch is present.
 
+**Note (0.25.0, hardware).** The server described above is out of date. The machine the backend will be measured on has two RTX 3090 cards with 24 GB each. Their double-precision throughput is about 1/64 of single precision, which bears on the precision policy of the backend. The second sentence of this entry is also too optimistic: a long-term study measured on the CPU path that the line-length histograms, not the distance blocks, take three quarters of the time, so a device version of `sq_distance_block` alone would leave the bottleneck on the CPU. Both points are for the entry that confirms or replaces this one when the backend lands.
+
 ---
 
 <a id="dd-17"></a>

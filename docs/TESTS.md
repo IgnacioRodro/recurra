@@ -163,12 +163,12 @@ Decisions: DD-45
 | `test_every_decision_cited_in_source_exists` | A dangling [DD-nn] in a docstring is a promise the documents do not keep. |
 | `test_major_decisions_are_cited_somewhere_in_the_source` | A decision about the code should be traceable from the code. |
 | `test_every_module_appears_in_the_architecture_map` | Every module appears in the architecture map. |
-| `test_architecture_quotes_the_real_test_count` | A stale count is the first sign a document stopped being maintained. |
+| `test_architecture_quotes_the_real_test_count` | A stale count is the first sign a document stopped being maintained. The count is written in two places, the architecture document and the README's status line, and both are checked. Nowhere else q... |
 | `test_figure_catalogue_lists_every_registered_figure` | Figure catalogue lists every registered figure. |
 | `test_example_scripts_referenced_in_the_readme_exist` | Example scripts referenced in the readme exist. |
 | `test_every_example_script_is_referenced` | Every example script is referenced. |
 | `test_examples_document_covers_the_public_api` | Every public entry point should appear somewhere in the examples. |
-| `test_changelog_mentions_the_current_version` | Changelog mentions the current version. |
+| `test_changelog_mentions_the_current_version` | The newest heading says what the version is: a development version is `unreleased`, a release carries the date it was tagged. |
 | `test_cookbook_exercises_the_whole_public_api` | The cookbook is the acceptance test for the API surface [DD-45]. |
 | `test_cookbook_is_split_into_spyder_cells` | Cookbook is split into spyder cells. |
 | `test_test_index_is_current` | docs/TESTS.md is generated; a stale one is worse than none [DD-45]. |

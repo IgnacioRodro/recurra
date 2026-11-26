@@ -22,10 +22,9 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering",
 ]
-# Floors verified by running the full suite on both ends of the range:
-#   Python 3.10.9 / numpy 1.26.4 / scipy 1.10.0 / pandas 1.5.3  (Windows)
-#   Python 3.12.3 / numpy 2.4.4  / scipy 1.17.1 / pandas 3.0.2  (Linux)
-# The `minimum-versions` CI job pins the floors so this claim cannot rot.
+# The floors are a claim about what works: the `minimum-versions` CI job pins
+# exactly these versions (on Python 3.10) and runs the suite on every push, so
+# the claim cannot rot. The other CI jobs run current releases.
 dependencies = ["numpy>=1.24", "scipy>=1.10", "pandas>=1.5"]
 
 [project.optional-dependencies]

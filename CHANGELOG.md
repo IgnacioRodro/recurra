@@ -2,9 +2,11 @@
 
 All notable changes to this project. Language policy: English throughout [DD-30].
 
-## [0.25.0.dev0] — unreleased
+## [0.25.0] — 2026-11-26
 
-Pre-release audit. Changes that alter results are listed first.
+The audit release, and the first one published on GitHub. Changes that alter
+results are listed first; the last section lists what was done to the
+repository for the release itself.
 
 **Added**
 
@@ -143,6 +145,27 @@ Pre-release audit. Changes that alter results are listed first.
   and now says so; the three 0.7.3.dev0 entries are one entry with three
   passes.
 - The last four Spanish words in docstrings ("memoria") are translated.
+
+**Release housekeeping**
+
+- `CONTRIBUTING.md`: the rules the project follows, with the reason for each.
+- `docs/ROADMAP.md`: sections 4 and 5 rewritten with the real state (they
+  still described the nine broken slow tests and 183 lint findings) and a
+  release checklist that runs every example, the cookbook included.
+- Test counts are written only where a test checks them (`ARCHITECTURE.md`
+  and the status line of `README.md`); `INSTALL.md`, `ROADMAP.md` and the
+  README's test commands quoted counts several versions old.
+- `tests/test_docs.py` now also checks the README's test count and figure
+  count, that a release heading in the changelog carries a date and a
+  development one says `unreleased`, and that `CITATION.cff` names the latest
+  release with its date.
+- CI gains a `build` job: the wheel is built, installed in a clean
+  environment and imported, so packaging is checked on every push.
+- `README.md` and `docs/INSTALL.md` show how to install a release pinned to
+  its tag. DD-16 carries a note on the hardware the GPU backend will be
+  measured on.
+- `docs/EXAMPLES.md`: two sections numbered 8b.4 and 8b.5 twice are now 8b.7
+  and 8b.8.
 
 ## [0.24.0] — 2026-09-20
 
