@@ -2,6 +2,10 @@
 
 All notable changes to this project. Language policy: English throughout [DD-30].
 
+## [0.26.0.dev0] — unreleased
+
+Development version after the 0.25.0 release. No changes yet.
+
 ## [0.25.0] — 2026-11-26
 
 The audit release, and the first one published on GitHub. Changes that alter
