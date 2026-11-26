@@ -1,0 +1,53 @@
+# GPU benchmark of the 0.26.0 release
+
+Machine: compute300, 2 x Intel Xeon Silver 4210R (20 physical cores, 40
+logical), 2 x NVIDIA RTX 3090 24 GB (driver 580.178.04, CUDA 13.0), PyTorch
+2.14.1+cu130, numpy 2.5.5. Measured on 2026-11-26 with tools/benchmark_engine.py
+on the tagged release, 200 windows per size, mixed precision, 8 GB budget.
+
+Three runs, as printed:
+
+1. recurra_0.26.0_bench: --sizes 1280 2560 5120 10240 --engines numpy torch
+   --jobs 20 --devices cuda:0 --precisions mixed. The CPU's worker processes
+   are started before timing, as in a long batch.
+2. recurra_0.26.0_bench_gpu0 and 3. recurra_0.26.0_bench_gpu1: the same sizes,
+   --engines torch --no-windowed, cuda:0 and cuda:1 measuring at the same time.
+
+recurra 0.26.0, numpy 2.5.5, torch 2.14.1+cu130, 40 logical cores (20 physical), BLAS threads 1
+N=  1280  one window: threshold 0.0190 s, plot + histograms 0.0289 s
+N=  1280  batch_rqa numpy, n_jobs= 20: 200 windows in     1.34 s,    149.10 windows/s
+N=  1280  batch_rqa torch on cuda:0, mixed, fused: 200 windows in     0.20 s,   1000.85 windows/s (batches of 200, peak 3.3 GB)
+N=  1280  windowed numpy, n_jobs= 20: 200 windows in     2.06 s,     97.32 windows/s
+N=  2560  one window: threshold 0.0138 s, plot + histograms 0.1227 s
+N=  2560  batch_rqa numpy, n_jobs= 20: 200 windows in     3.67 s,     54.48 windows/s
+N=  2560  batch_rqa torch on cuda:0, mixed, fused: 200 windows in     0.44 s,    450.32 windows/s (batches of 50, peak 3.29 GB)
+N=  2560  windowed numpy, n_jobs= 20: 200 windows in     4.68 s,     42.77 windows/s
+N=  5120  one window: threshold 0.0138 s, plot + histograms 0.5029 s
+N=  5120  batch_rqa numpy, n_jobs= 20: 200 windows in    12.35 s,     16.19 windows/s
+N=  5120  batch_rqa torch on cuda:0, mixed, fused: 200 windows in     1.46 s,    137.09 windows/s (batches of 12, peak 3.154 GB)
+N=  5120  windowed numpy, n_jobs= 20: 200 windows in    13.15 s,     15.20 windows/s
+N= 10240  one window: threshold 0.0146 s, plot + histograms 2.3586 s
+N= 10240  batch_rqa numpy, n_jobs= 20: 200 windows in    51.01 s,      3.92 windows/s
+N= 10240  batch_rqa torch on cuda:0, mixed, fused: 200 windows in     5.64 s,     35.45 windows/s (batches of 3, peak 3.151 GB)
+N= 10240  windowed numpy, n_jobs= 20: 200 windows in    56.32 s,      3.55 windows/s
+written: recurra_0.26.0_bench.csv and recurra_0.26.0_bench.txt
+recurra 0.26.0, numpy 2.5.5, torch 2.14.1+cu130, 40 logical cores (20 physical), BLAS threads 1
+N=  1280  one window: threshold 0.0190 s, plot + histograms 0.0286 s
+N=  1280  batch_rqa torch on cuda:0, mixed, fused: 200 windows in     0.21 s,    965.10 windows/s (batches of 200, peak 3.3 GB)
+N=  2560  one window: threshold 0.0151 s, plot + histograms 0.1291 s
+N=  2560  batch_rqa torch on cuda:0, mixed, fused: 200 windows in     0.46 s,    435.49 windows/s (batches of 50, peak 3.29 GB)
+N=  5120  one window: threshold 0.0148 s, plot + histograms 0.5321 s
+N=  5120  batch_rqa torch on cuda:0, mixed, fused: 200 windows in     1.47 s,    136.30 windows/s (batches of 12, peak 3.154 GB)
+N= 10240  one window: threshold 0.0145 s, plot + histograms 2.3570 s
+N= 10240  batch_rqa torch on cuda:0, mixed, fused: 200 windows in     5.64 s,     35.44 windows/s (batches of 3, peak 3.151 GB)
+written: recurra_0.26.0_bench_gpu0.csv and recurra_0.26.0_bench_gpu0.txt
+recurra 0.26.0, numpy 2.5.5, torch 2.14.1+cu130, 40 logical cores (20 physical), BLAS threads 1
+N=  1280  one window: threshold 0.0190 s, plot + histograms 0.0288 s
+N=  1280  batch_rqa torch on cuda:1, mixed, fused: 200 windows in     0.20 s,   1013.87 windows/s (batches of 200, peak 3.3 GB)
+N=  2560  one window: threshold 0.0141 s, plot + histograms 0.1217 s
+N=  2560  batch_rqa torch on cuda:1, mixed, fused: 200 windows in     0.45 s,    444.30 windows/s (batches of 50, peak 3.29 GB)
+N=  5120  one window: threshold 0.0148 s, plot + histograms 0.4998 s
+N=  5120  batch_rqa torch on cuda:1, mixed, fused: 200 windows in     1.46 s,    136.54 windows/s (batches of 12, peak 3.154 GB)
+N= 10240  one window: threshold 0.0157 s, plot + histograms 2.3772 s
+N= 10240  batch_rqa torch on cuda:1, mixed, fused: 200 windows in     5.66 s,     35.35 windows/s (batches of 3, peak 3.151 GB)
+written: recurra_0.26.0_bench_gpu1.csv and recurra_0.26.0_bench_gpu1.txt

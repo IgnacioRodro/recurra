@@ -8,12 +8,26 @@ Development after 0.26.0. Planned: cross and joint recurrence plots, FAN and
 per-block thresholds and the thresholds of `windowed_recurrence` on the GPU;
 two GPUs from one call; the user guide.
 
+**Corrections to the 0.26.0 notes**
+
+- The GPU was said to do 9 to 16 times the work of twenty CPU cores. The CPU
+  figures behind that included starting the worker processes; measured on the
+  release with them already started, one RTX 3090 does 6.7 to 9.0 times the
+  work of twenty cores, and two cards together twice that (DD-125,
+  `docs/data/benchmarks/gpu_rtx3090_0.26.0_release.txt`). The 0.26.0 entry
+  below now gives the corrected figure.
+- The single search for vertical and white vertical lines (DD-127) changed
+  nothing measurable on an RTX 3090 (within 3 % of the version before it);
+  it is kept because it gives the same counts with less code per band and is
+  faster on the CPU build of PyTorch.
+
 ## [0.26.0] — 2026-11-26
 
 The GPU engine. With a CUDA device and PyTorch, the RQA of many windows runs
-on the GPU and gives the CPU's numbers: on an RTX 3090 one card did 9 to 16
-times the work of twenty CPU cores, for windows of 1280 to 10 240 points
-(DD-125, DD-127). Without a GPU nothing is needed and the CPU path is faster
+on the GPU and gives the CPU's numbers: on an RTX 3090 one card did 6.7 to 9
+times the work of twenty CPU cores, for windows of 1280 to 10 240 points, and
+two cards twice that (DD-125, DD-127; corrected after the release, which said
+9 to 16). Without a GPU nothing is needed and the CPU path is faster
 than in 0.25, and uses every physical core by default (DD-124, DD-126). Before
 the engine, the measurement rules a second engine has to agree with were
 fixed (DD-122, DD-123). Changes that alter results are listed first.

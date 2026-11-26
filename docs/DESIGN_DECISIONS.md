@@ -5142,6 +5142,15 @@ plus a margin. For the long-term study above, mixed on both cards brings a
 pair of bands to about 10 hours with 10-second windows and 15 hours with
 20-second windows, from 2.5 and 3.8 days.
 
+*Correction, measured on the 0.26.0 release* (after [DD-127];
+`docs/data/benchmarks/gpu_rtx3090_0.26.0_release.txt`). The CPU figures above
+included starting the twenty worker processes. Started beforehand, as in a
+long batch, the twenty cores did 149, 54.5, 16.2 and 3.92 windows per second
+at 1280, 2560, 5120 and 10 240 points, and one card in mixed precision 1001,
+450, 137 and 35.5: 6.7 to 9.0 times the CPU. With both cards measuring at once
+each kept its speed (965 to 1014 windows per second at 1280 points, 35.4 at
+10 240), so two processes, one per card, double it.
+
 Short windows (128 to 1024 points, mixed): the GPU did 3800 to 990 windows per
 second, the twenty cores 680 to 150 (and one core about 420 at 128 points), so
 the device wins at every size measured, 9 times at 128 points against one
@@ -5305,7 +5314,10 @@ to 1.05 s for 200 windows and the diagonals from 2.46 to 0.99 s; the vertical
 and white vertical searches, from 2.12 and 2.22 s to 1.44 and 1.56 s, are now
 over half of the time. The single search for both (decision 1, added after
 this measurement) took them on the CPU from 0.09 to 0.06 s for four windows
-of 2000 points; its effect on CUDA is in the release benchmark.
+of 2000 points. On CUDA it changed nothing measurable: the release did 1001,
+450, 137 and 35.5 windows per second against 1010, 454, 138 and 36.4 before
+it, within 3 %. It stays, since the counts are the same and each band needs
+less code, and it is faster on the CPU build of PyTorch.
 
 **Consequences.** No result changes. The first call on a CUDA device per
 metric and dimension compiles the kernel (seconds to a minute; cached on
