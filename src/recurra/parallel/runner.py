@@ -48,6 +48,65 @@ def resolve_jobs(n_jobs: int | None = None) -> int:
     return int(n)
 
 
+#: Below this much work, counted in cells of recurrence plots, starting worker
+#: processes costs more than it saves: about a second of one core [DD-126].
+AUTO_PARALLEL_CELLS = 50_000_000
+
+_ANNOUNCED_JOBS: set[int] = set()
+
+
+def auto_jobs(n_jobs: int | None, *, n_items: int, work_cells: float | None = None) -> int:
+    """Workers for a batch: what was asked, or the best this machine can do.
+
+    Design note (DD-126) -- by default, compute as fast as the machine allows.
+
+    ``n_jobs=None`` used to mean one core. Batch functions now take every
+    physical core when the work is large enough to gain from it (more than
+    ``AUTO_PARALLEL_CELLS`` and at least two items), and announce it once.
+    Hardware threads are not counted: a second thread per core gave nothing
+    for this work [DD-82]. A number (or ``set_config(n_jobs=...)``) is used as
+    given; ``1`` stays on one core. Without joblib the batch runs on one core
+    and says how to get the rest. Inside a worker process -- a batch called
+    from the user's own parallel loop -- the default is one core, so the cores
+    are not asked for twice.
+    """
+    import importlib.util
+    import multiprocessing
+    import warnings
+
+    from ..exceptions import CaveatWarning
+
+    if n_jobs is not None:
+        return resolve_jobs(n_jobs)
+    configured = get_config().n_jobs
+    if configured is not None:
+        return resolve_jobs(configured)
+    if n_items < 2 or (work_cells is not None and work_cells < AUTO_PARALLEL_CELLS):
+        return 1
+    if multiprocessing.parent_process() is not None:
+        return 1
+    from ..engine import physical_cores
+
+    n = min(physical_cores(), n_items)
+    if n <= 1:
+        return 1
+    if importlib.util.find_spec("joblib") is None:
+        if 0 not in _ANNOUNCED_JOBS:
+            _ANNOUNCED_JOBS.add(0)
+            warnings.warn(
+                f"this batch would run on {n} cores, but joblib is not installed, so it "
+                'runs on one. Install it with: pip install "recurra[parallel]" [DD-126].',
+                CaveatWarning, stacklevel=3)
+        return 1
+    if n not in _ANNOUNCED_JOBS:
+        _ANNOUNCED_JOBS.add(n)
+        warnings.warn(
+            f"n_jobs=None: using {n} worker processes, one per physical core. Pass "
+            "n_jobs=1 to stay on one core, or another number [DD-126].",
+            CaveatWarning, stacklevel=3)
+    return n
+
+
 def _require_joblib():
     try:
         import joblib

@@ -118,7 +118,9 @@ def batch_rqa(windows, *, target_rr: float = 0.05, epsilon: float | None = None,
         Torch engine: windows per batch and the device memory it may use
         (default ``Config.gpu_memory_budget_gb``). Neither changes a result.
     n_jobs
-        Numpy engine: worker processes [DD-82]. Torch engine: unused.
+        Numpy engine: worker processes [DD-82]. ``None`` (default) uses every
+        physical core when the batch is large enough to gain from it, and says
+        so once [DD-126]. Torch engine: unused.
     return_histograms
         Also return the list of line histograms, in window order.
 
@@ -151,9 +153,10 @@ def batch_rqa(windows, *, target_rr: float = 0.05, epsilon: float | None = None,
     prov: dict[str, Any] = choice.provenance()
 
     if choice.engine == "numpy":
-        from ..parallel.runner import parallel_map, resolve_jobs
+        from ..parallel.runner import auto_jobs, parallel_map
 
-        jobs = resolve_jobs(n_jobs)
+        jobs = auto_jobs(n_jobs, n_items=len(ws),
+                         work_cells=float(sum(w.shape[0] ** 2 for w in ws)))
         items = [(w, seeds[w.shape[0]]) for w in ws]
         if jobs <= 1:
             results = _numpy_chunk(items, **common)

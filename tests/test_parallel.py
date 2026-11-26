@@ -89,3 +89,82 @@ def test_serial_backend_is_always_available():
     out = parallel_map(lambda x, rng=None: x + 1, [1, 2, 3], n_jobs=1,
                        backend="serial", pass_rng=False)
     assert out == [2, 3, 4]
+
+
+# ------------------------------------------------------- default workers
+def _fresh_auto(monkeypatch, cores=8):
+    """auto_jobs with the config default restored and a fixed core count."""
+    import recurra.engine as engine
+    import recurra.parallel.runner as runner
+
+    rc.set_config(n_jobs=None)
+    monkeypatch.setattr(runner, "_ANNOUNCED_JOBS", set())
+    monkeypatch.setattr(engine, "physical_cores", lambda: cores)
+    return runner
+
+
+def test_default_takes_every_physical_core_when_the_work_is_worth_it(monkeypatch):
+    """DD-126: by default a batch computes as fast as the machine allows."""
+    pytest.importorskip("joblib")
+    runner = _fresh_auto(monkeypatch, cores=8)
+    big = 10 * runner.AUTO_PARALLEL_CELLS
+    with pytest.warns(rc.CaveatWarning, match="8 worker processes"):
+        assert runner.auto_jobs(None, n_items=100, work_cells=big) == 8
+    # Never more workers than items, and the announcement is not repeated.
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert runner.auto_jobs(None, n_items=100, work_cells=big) == 8
+    assert runner.auto_jobs(None, n_items=3, work_cells=big) == 3
+
+
+def test_default_stays_on_one_core_for_small_work(monkeypatch):
+    runner = _fresh_auto(monkeypatch, cores=8)
+    assert runner.auto_jobs(None, n_items=100, work_cells=1e6) == 1
+    assert runner.auto_jobs(None, n_items=1, work_cells=1e12) == 1
+
+
+def test_an_explicit_count_is_used_as_given(monkeypatch):
+    runner = _fresh_auto(monkeypatch, cores=8)
+    assert runner.auto_jobs(1, n_items=100, work_cells=1e12) == 1
+    assert runner.auto_jobs(3, n_items=100, work_cells=1e3) == 3
+    rc.set_config(n_jobs=2)
+    assert runner.auto_jobs(None, n_items=100, work_cells=1e12) == 2
+
+
+def test_default_without_joblib_runs_on_one_core_and_says_how(monkeypatch):
+    import importlib.util
+
+    runner = _fresh_auto(monkeypatch, cores=8)
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec",
+                        lambda name, *a: None if name == "joblib" else real(name, *a))
+    with pytest.warns(rc.CaveatWarning, match="joblib is not installed"):
+        assert runner.auto_jobs(None, n_items=100, work_cells=1e12) == 1
+
+
+def test_batch_rqa_default_matches_one_core(monkeypatch):
+    """The default spreads the batch; the numbers do not move [DD-81]."""
+    pytest.importorskip("joblib")
+    import recurra.parallel.runner as runner
+
+    g = np.random.default_rng(3)
+    W = g.standard_normal((4, 300, 2))
+    one = rc.batch_rqa(W, rng=0, engine="numpy", n_jobs=1)
+    _fresh_auto(monkeypatch, cores=2)
+    monkeypatch.setattr(runner, "AUTO_PARALLEL_CELLS", 1)
+    with pytest.warns(rc.CaveatWarning, match="2 worker processes"):
+        auto = rc.batch_rqa(W, rng=0, engine="numpy")
+    assert one.equals(auto)
+
+
+def test_default_inside_a_worker_process_stays_on_one_core(monkeypatch):
+    """A batch called from the user's own parallel loop does not start one
+    process per core in every worker [DD-126]."""
+    import multiprocessing
+
+    runner = _fresh_auto(monkeypatch, cores=8)
+    monkeypatch.setattr(multiprocessing, "parent_process", lambda: object())
+    assert runner.auto_jobs(None, n_items=100, work_cells=1e12) == 1
+    assert runner.auto_jobs(4, n_items=100, work_cells=1e12) == 4

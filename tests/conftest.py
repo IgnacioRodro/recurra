@@ -6,6 +6,19 @@ import pytest
 import recurra as rc
 
 
+@pytest.fixture(autouse=True)
+def _one_core_per_test_worker():
+    """Batch functions take every physical core by default [DD-126]. Under
+    ``pytest -n auto`` each test worker already holds a core, so a test that
+    did the same would start one process per core from each of them. Tests run
+    on one core unless they ask; ``test_parallel.py`` exercises the default.
+    """
+    before = rc.get_config().n_jobs
+    rc.set_config(n_jobs=1)
+    yield
+    rc.set_config(n_jobs=before)
+
+
 @pytest.fixture
 def pac_signal():
     return rc.generate_cfc(modality="pac", duration=12.0, fs=500.0, alpha=0.8,

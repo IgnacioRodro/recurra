@@ -651,6 +651,11 @@ class BatchWindowedRecurrence:  # noqa: D101 -- documented below
         channel while fifteen sit idle. With ``n_jobs`` here the same work
         takes as long as its slowest subject.
 
+        ``n_jobs=None`` (default) uses every physical core when RQA, dynamics
+        or invariants are asked for and the batch is large enough, and says so
+        once [DD-126]; ``1`` stays on one core. With the torch engine the
+        records run one after another and the device takes the windows.
+
         Results do not depend on ``n_jobs``: each record has its own stream
         fixed at build time [DD-81].
         """
@@ -666,6 +671,18 @@ class BatchWindowedRecurrence:  # noqa: D101 -- documented below
             n_min = min((w.n_samples for w in first.windows), default=0)
             on_device = resolve_engine(kw.get("engine", "auto"), kw.get("device"),
                                        n_points=n_min, announce=False).engine == "torch"
+        heavy = any(kw.get(k) for k in ("rqa", "dynamics", "invariants"))
+        if on_device or not heavy:
+            # Without line or dynamical metrics the table comes from what was
+            # stored at build time: no work worth a worker process.
+            n_jobs = 1 if n_jobs is None else n_jobs
+        else:
+            from ..parallel.runner import auto_jobs
+
+            cells = sum(len(wr.windows) * max((w.n_samples for w in wr.windows),
+                                              default=0) ** 2
+                        for wr in self.results.values())
+            n_jobs = auto_jobs(n_jobs, n_items=len(names), work_cells=float(cells))
         if n_jobs in (None, 1, 0) or len(names) < 2 or on_device:
             frames = [self._one(name, **kw) for name in names]
         else:
@@ -734,6 +751,17 @@ class BatchWindowedRecurrence:  # noqa: D101 -- documented below
                 f"{m['recurrence_rate'].max():.3%}")
 
 
+def _n_windows(window, source) -> int:
+    """How many windows a record will have, without building any of them."""
+    try:
+        srcs = source if isinstance(source, (list, tuple)) else [source]
+        windows, _ = resolve_windows(window, _n_points(srcs[0]), _fs(srcs[0]),
+                                     _t0(srcs[0]))
+        return len(windows)
+    except Exception:
+        return 1
+
+
 def batch_windowed_recurrence(sources: Mapping[str, Any] | Sequence, window, *,
                               rng: SeedLike = None, progress: bool = False,
                               contract=None, verify: bool = True,
@@ -760,9 +788,11 @@ def batch_windowed_recurrence(sources: Mapping[str, Any] | Sequence, window, *,
         axis is constant across records. A window spec that resolves to
         different window lengths per record is caught here.
     n_jobs
-        Records are independent, so they run in parallel when asked. Each gets
-        its own random stream derived by position, so **the result does not
-        depend on n_jobs** [DD-81]. ``-1`` uses every core.
+        Records are independent, so they run in parallel. ``None`` (default)
+        uses every physical core when there is enough work, and says so once
+        [DD-126]; ``1`` stays on one core. Each record gets its own random
+        stream derived by position, so **the result does not depend on
+        n_jobs** [DD-81]. ``-1`` uses every logical core.
     """
     from ..comparability import ComparabilityContract, check_comparability
 
@@ -782,9 +812,13 @@ def batch_windowed_recurrence(sources: Mapping[str, Any] | Sequence, window, *,
              else [(f"record{i:03d}", s) for i, s in enumerate(sources)])
     streams = spawn_rngs(rng, max(1, len(items)))
 
-    from ..parallel.runner import parallel_map, resolve_jobs
+    from ..parallel.runner import auto_jobs, parallel_map
 
-    if resolve_jobs(n_jobs) > 1 and len(items) > 1:
+    # Building estimates one threshold per window, about the cost of 600 000
+    # cells each, so the default spreads it when there are enough windows.
+    n_jobs = auto_jobs(n_jobs, n_items=len(items),
+                       work_cells=6e5 * sum(_n_windows(window, src) for _, src in items))
+    if n_jobs > 1 and len(items) > 1:
         # A module-level callable, not a lambda: the process backend pickles it.
         computed = parallel_map(_one_record, items, n_jobs=n_jobs,
                                 backend=backend, rng=rng, progress=progress,

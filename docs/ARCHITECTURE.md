@@ -354,7 +354,7 @@ value with the region and any warning; `float(invariant)` gives the number.
 
 ## 5. Test suite
 
-**547 test functions, all green** (more cases once parametrised).
+**555 test functions, all green** (more cases once parametrised).
 
 | File | Covers |
 |---|---|
@@ -374,7 +374,7 @@ value with the region and any warning; `float(invariant)` gives the number.
 | `test_rqa.py` | **DD-56** carry logic and streaming equivalence over 48 combinations, **DD-124** band histograms equal to two independent references, **DD-58/59** conventions, ground truth on noise, sine and Lorenz, CRQA lag recovery, integration with the windowed table |
 | `test_dynamics.py` | **DD-61** scaling-region location, **DD-62** unit conversion, **DD-63** the guards for numerically degenerate curves, plus ground truth for D2, lambda_1, K2, DFA, Higuchi and three entropies |
 | `test_validation.py` | **DD-64/65/66/67** the harmonic artefact exists and is monotone; at equal modulation index DET and the diagonal family distinguish genuine coupling from it, the vertical family points the other way; every signal has a unique seed |
-| `test_parallel.py` | **DD-81** results identical across job counts, streams derived by position, the worker is picklable; **DD-82** the serial path never needs joblib |
+| `test_parallel.py` | **DD-81** results identical across job counts, streams derived by position, the worker is picklable; **DD-82** the serial path never needs joblib; **DD-126** the default takes every physical core only when the work pays, says so once, and gives the one-core table |
 | `test_engine.py` | **DD-125** engine choice, no silent fall back; torch thresholds bit for bit; tables and histograms equal to the reference engine for noise, sine and Lorenz, every Theiler window, any batch size or band height; mixed precision; the windowed path; `cuda` tests on a GPU |
 | `test_classify.py` | **DD-83** folds never straddle a subject and shuffled labels score at chance, **DD-85** imbalance reported with a baseline, **DD-86** repeats give a spread, **DD-87** the permutation null sits at chance |
 | `test_realdata.py` | **DD-88** genuine EDF round trips, units, metadata and annotations kept, mixed rates named; **DD-89** the corpus join is reported, orphan rows and duplicate subjects caught |

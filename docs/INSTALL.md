@@ -396,9 +396,11 @@ takes PyTorch's default build from PyPI, which suits a recent driver.
 **Two GPUs, and the CPU workers.** One call uses one device. To use two, run
 two processes, each with its own device: `device="cuda:1"` in the second, or
 `CUDA_VISIBLE_DEVICES=1` before starting it (the device it sees is then
-`cuda:0`). On the GPU, `n_jobs` is not used; on the CPU, set it to the number
-of physical cores, not of hardware threads: a second thread per core gave
-nothing for this work [DD-82].
+`cuda:0`). On the GPU, `n_jobs` is not used. On the CPU the batch functions
+already use one worker process per physical core when the batch is large
+enough (they say so once) [DD-126]; a second hardware thread per core gave
+nothing for this work [DD-82]. To keep a shared machine partly free, pass a
+smaller `n_jobs` or set it once with `rc.set_config(n_jobs=8)`.
 
 **Memory.** The engine sizes its batches to `Config.gpu_memory_budget_gb`
 (8 GB by default) or to `device_memory_gb=` in the call, and refuses with the
@@ -425,3 +427,11 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
   python tools/benchmark_engine.py --engines numpy torch --jobs 1 20 \
   --devices cuda:0 --out benchmark_gpu.csv
 ```
+
+Two variants answer the questions that remain open. With small windows,
+`--sizes 128 256 384 512 768 1024`, it shows where the GPU starts to beat the
+CPU cores, which is what `engine="auto"` uses (`AUTO_MIN_POINTS`). With
+`--profile`, each GPU line is followed by the seconds spent in each stage
+(thresholds, decisions, each kind of line, copying back), which shows what is
+worth optimising; it waits for the device at every stage, so it runs a little
+slower than without it.

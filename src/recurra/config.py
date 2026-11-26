@@ -62,7 +62,9 @@ class Config:
     output_dir: str = "outputs"
     #: Default parallel backend.
     parallel_backend: str = "serial"
-    n_jobs: int = 1
+    #: Workers when a call does not say. ``None``: batch functions use every
+    #: physical core when the work is worth it, everything else one [DD-126].
+    n_jobs: int | None = None
     #: Fail instead of warning when data quality checks trip.
     strict_quality: bool = False
     _extra: dict = field(default_factory=dict)

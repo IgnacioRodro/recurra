@@ -35,6 +35,7 @@ decision at a fraction of its cost on cards whose float64 is slow.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -52,16 +53,48 @@ NEAR_RTOL = 1e-12
 #: counted, and with ``precision="mixed"`` recomputed in double. Float32
 #: rounding of a squared distance between centred coordinates is a few parts
 #: in 10^6 of epsilon squared at the rates used in practice; this is 25 times
-#: that.
+#: that. It is the floor: a window whose coordinates reach far from its centre
+#: compared with epsilon gets a wider band (``_single_rtol``), so that no cell
+#: outside the band can be decided differently in float32 and float64.
 SINGLE_RTOL = 1e-4
 
 #: Bytes per cell of a band, all temporaries included, used to fit batches in
-#: the declared device memory. Counted from the temporaries of one band (in
-#: double: the difference, its square and the running sum, 8 bytes each, the
-#: near-epsilon check, the boolean band, the padded and sheared copies of the
-#: run search), with a margin; to be confirmed against the device's own
-#: memory statistics.
-BYTES_PER_CELL = {"double": 48, "single": 32, "mixed": 36}
+#: the declared device memory. Measured on an RTX 3090 with an 8 GB budget
+#: and the earlier 48 and 36 bytes: the peak was about 5.3 GB in double and
+#: 3.5 GB in mixed, that is about 32 and 16 bytes per cell. Single keeps the
+#: same float32 temporaries as mixed. The values keep a margin over those.
+BYTES_PER_CELL = {"double": 36, "single": 24, "mixed": 24}
+
+
+#: Set by ``tools/benchmark_engine.py --profile``: time each stage of the
+#: engine, waiting for the device at every boundary (which costs a little
+#: speed), and record the seconds in the provenance. Not part of the API.
+PROFILE = False
+
+
+class _Stages:
+    """Seconds per stage when ``PROFILE`` is on; nothing at all otherwise."""
+
+    def __init__(self, dev):
+        self.on = PROFILE
+        self.dev = dev
+        self.seconds: dict[str, float] = {}
+        self._last = 0.0
+        if self.on:
+            self._sync()
+            self._last = time.perf_counter()
+
+    def _sync(self):
+        if self.dev.type == "cuda":
+            _torch().cuda.synchronize(self.dev)
+
+    def mark(self, name: str) -> None:
+        if not self.on:
+            return
+        self._sync()
+        now = time.perf_counter()
+        self.seconds[name] = self.seconds.get(name, 0.0) + now - self._last
+        self._last = now
 
 
 def _torch():
@@ -235,6 +268,25 @@ def fixed_rates(V, eps: float, *, metric: str = "euclidean") -> np.ndarray:
     return _exact_counts(S, np.full(B, float(eps)), metric) / k
 
 
+def _single_rtol(Xw: np.ndarray, eps: np.ndarray) -> np.ndarray:
+    """Per window, a relative band around epsilon that contains every cell
+    whose float32 decision could differ from its float64 one.
+
+    Rounding the coordinates to float32 moves each by at most ``u |x|``
+    (``u = 2**-24``), so a difference moves by at most ``u (|x| + |y| + d)``
+    and a distance near epsilon, summed over ``dim`` coordinates, by about
+    ``2 u dim (2 R + eps)``, with ``R`` the largest centred coordinate. The
+    band is eight times that, relative to epsilon, and never narrower than
+    ``SINGLE_RTOL``.
+    """
+    u = 2.0 ** -24
+    dim = Xw.shape[2]
+    R = np.max(np.abs(Xw.reshape(Xw.shape[0], -1)), axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = np.where(eps > 0, R / eps, np.inf)
+    return np.maximum(SINGLE_RTOL, 16.0 * u * dim * (2.0 * ratio + 1.0))
+
+
 # ----------------------------------------------------------------- decisions
 def _decide(A, C, eps_op, *, metric: str, i0: int, theiler: int, banded: bool):
     """Recurrent cells of one band: rows ``A`` (B, h, d) against ``C`` (B, m, d).
@@ -319,7 +371,7 @@ def _shear(R):
 
 
 def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
-                          device: str, band_rows: int):
+                          device: str, band_rows: int, stages: _Stages | None = None):
     """Line histograms of one batch of recurrence plots on the device.
 
     ``Xw`` is (B, N, d), float64, already centred as the reference centres it;
@@ -334,6 +386,7 @@ def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
     if precision not in PRECISIONS:
         raise ParameterError(f"precision must be one of {PRECISIONS}, got {precision!r}")
     dev = torch.device(device)
+    stages = stages or _Stages(dev)
     B, n, d = Xw.shape
     m = n
     size1 = n + 1
@@ -343,7 +396,10 @@ def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
     eps_np = eps * eps if metric == "euclidean" else eps
     eps64 = torch.as_tensor(eps_np, dtype=torch.float64, device=dev).reshape(B, 1, 1)
     eps_c = eps64 if precision == "double" else eps64.to(torch.float32)
+    rtol32 = torch.as_tensor(_single_rtol(np.asarray(Xw, dtype=float), eps),
+                             dtype=torch.float32, device=dev).reshape(B, 1, 1)
     banded = theiler > 0
+    stages.mark("centre_and_copy_to_device")
 
     diag = torch.zeros(B * size1, dtype=torch.int64, device=dev)
     vert = torch.zeros(B * size1, dtype=torch.int64, device=dev)
@@ -373,7 +429,7 @@ def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
         if precision == "double":
             near += int(((acc - eps64).abs() <= NEAR_RTOL * eps64).sum())
         else:
-            amb = (acc - eps_c).abs() <= SINGLE_RTOL * eps_c
+            amb = (acc - eps_c).abs() <= rtol32 * eps_c
             if banded:
                 rows = torch.arange(i0, i1, device=dev).reshape(h, 1)
                 cols = torch.arange(m, device=dev).reshape(1, m)
@@ -397,11 +453,13 @@ def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
                 R[b_i, r_i, c_i] = acc64 <= eps64.reshape(B)[b_i]
                 rechecked += n_amb
         del acc
+        stages.mark("decide")
         recurrent += R.reshape(B, -1).sum(dim=1)
 
         # verticals: each column of each window is a line
         RT = R.transpose(1, 2).reshape(B * m, h)
         _carry_runs(RT, col_keys, col_batch, vert_open, vert, size1)
+        stages.mark("vertical")
 
         # diagonals, sheared into columns
         S = _shear(R)
@@ -411,6 +469,7 @@ def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
         b_of = torch.arange(B, dtype=torch.int64, device=dev).repeat_interleave(q)
         keys = b_of * n_keys + k_local.repeat(B)
         _carry_runs(ST, keys, b_of, diag_open, diag, size1)
+        stages.mark("diagonal")
 
         # white verticals, the Theiler band as a third state [DD-57]
         W = ~R
@@ -443,6 +502,7 @@ def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
         white_flag.zero_()
         white_open[line[bottom]] = length[bottom]
         white_flag[line[bottom]] = flag[bottom]
+        stages.mark("white_vertical")
 
     # flush: runs reaching the end of the record are kept [DD-57]
     open_d = diag_open > 0
@@ -454,7 +514,7 @@ def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
     open_w = (white_open > 0) & ~white_flag
     _count(white, white_open[open_w], col_batch[open_w], size1)
 
-    return {
+    out = {
         "diagonal": diag.reshape(B, size1).cpu().numpy(),
         "vertical": vert.reshape(B, size1).cpu().numpy(),
         "white_vertical": white.reshape(B, size1).cpu().numpy(),
@@ -462,6 +522,8 @@ def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
         "near_epsilon": near,
         "rechecked": rechecked,
     }
+    stages.mark("flush_and_copy_back")
+    return out
 
 
 # ---------------------------------------------------------------- the driver
@@ -495,6 +557,7 @@ def run_batches(ws, seeds, *, device, precision, batch_size, device_memory_gb,
     near = rechecked = 0
     plans = {}
     rounding = 0
+    stages = _Stages(dev)
     for (n, d), members in sorted(groups.items()):
         plan = plan_batches(len(members), n, precision=precision,
                             device_memory_gb=device_memory_gb, batch_size=batch_size)
@@ -530,11 +593,12 @@ def run_batches(ws, seeds, *, device, precision, batch_size, device_memory_gb,
                     mv = np.zeros(V.shape[0], dtype=bool)
                 eps[s0:s0 + sub], achieved[s0:s0 + sub], moved[s0:s0 + sub] = e, a, mv
                 del V, part
+            stages.mark("threshold")
             # centred as the reference centres each plot [DD-110]
             centred = np.stack([w - w.mean(axis=0) for w in raw])
             out = batch_line_histograms(centred, eps, theiler=theiler, metric=metric,
                                         precision=precision, device=device,
-                                        band_rows=plan.band_rows)
+                                        band_rows=plan.band_rows, stages=stages)
             near += out["near_epsilon"]
             rechecked += out["rechecked"]
             for b, k in enumerate(chunk):
@@ -561,6 +625,7 @@ def run_batches(ws, seeds, *, device, precision, batch_size, device_memory_gb,
                     theiler=theiler,
                     diagnostics={"engine": "torch", "device": device,
                                  "band_rows": plan.band_rows})
+            stages.mark("results")
     if rounding:
         warnings.warn(
             f"batch_rqa: in {rounding} window(s) epsilon is at rounding level for the "
@@ -574,7 +639,9 @@ def run_batches(ws, seeds, *, device, precision, batch_size, device_memory_gb,
             "peak_device_memory_gb": _peak_gb(dev),
             "cells_near_epsilon": int(near),
             "cells_rechecked_in_double": int(rechecked),
-            "deterministic_counts": True}
+            "deterministic_counts": True,
+            **({"stage_seconds": {k: round(v, 4) for k, v in stages.seconds.items()}}
+               if stages.on else {})}
 
 
 def _peak_gb(dev) -> float | None:

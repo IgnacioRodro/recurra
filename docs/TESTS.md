@@ -38,12 +38,12 @@ python examples/run_all.py        # 54 figures, 45 tables, 3 run reports
 | 4 | `test_comparability.py` | Comparability and groups | DD-42, DD-43, DD-44 | 29 |
 | 5 | `test_docs.py` | The living documents | DD-45 | 18 |
 | 6 | `test_dynamics.py` | test_dynamics.py |  | 63 |
-| 7 | `test_engine.py` | test_engine.py |  | 20 |
+| 7 | `test_engine.py` | test_engine.py |  | 22 |
 | 8 | `test_export.py` | CSV export | DD-10 | 4 |
 | 9 | `test_images.py` | test_images.py |  | 16 |
 | 10 | `test_ingest.py` | Ingestion | DD-08, DD-06 | 12 |
 | 11 | `test_meta.py` | test_meta.py |  | 7 |
-| 12 | `test_parallel.py` | test_parallel.py |  | 7 |
+| 12 | `test_parallel.py` | test_parallel.py |  | 13 |
 | 13 | `test_preprocess.py` | Filtering and Hilbert | DD-11, DD-12 | 10 |
 | 14 | `test_realdata.py` | test_realdata.py |  | 15 |
 | 15 | `test_recording.py` | The Recording object | DD-07, DD-04 | 5 |
@@ -57,7 +57,7 @@ python examples/run_all.py        # 54 figures, 45 tables, 3 run reports
 | 23 | `test_validation.py` | test_validation.py |  | 26 |
 | 24 | `test_viz.py` | Figures | DD-27, DD-30, DD-31, DD-38, DD-49..52 | 41 |
 | 25 | `test_windowed.py` | Windowed analysis | DD-39, DD-40, DD-41 | 49 |
-| | | | **total** | **547 functions** |
+| | | | **total** | **555 functions** |
 
 Parametrised tests expand to more cases; run `pytest -q` for the count.
 
@@ -270,6 +270,8 @@ Decisions: DD-45
 | `test_both_gpus_give_the_same_answer` | Both gpus give the same answer. |
 | `test_windowed_metrics_are_the_same_on_the_torch_engine` | The call a study makes, windowed_recurrence(...).metrics(rqa=True), with the histograms computed by the torch engine: the same table, and the engine recorded. |
 | `test_windowed_metrics_are_the_same_on_cuda` | Windowed metrics are the same on cuda. |
+| `test_mixed_equals_double_on_coordinates_far_from_epsilon` | The float32 band widens with the window's reach [DD-125]: two clusters 4000 apart with epsilon of order one would put float32 rounding (about 2.4e-4 of a coordinate) far outside a fixed 1e-4 band. |
+| `test_stage_profile_is_off_by_default_and_complete_when_on` | The benchmark's --profile switch: seconds per stage in the provenance, nothing when it is off, and the same table either way. |
 
 ## 8. `test_export.py` — CSV export
 
@@ -349,6 +351,12 @@ Decisions: DD-08, DD-06
 | `test_batch_results_do_not_depend_on_n_jobs` | The promise of DD-05, checked on the real pipeline rather than argued. |
 | `test_batch_worker_is_picklable` | DD-81: the process backend pickles the callable, so it cannot be a lambda. This is the mistake the first implementation made. |
 | `test_serial_backend_is_always_available` | joblib is an optional dependency; asking for one worker must never reach it. |
+| `test_default_takes_every_physical_core_when_the_work_is_worth_it` | DD-126: by default a batch computes as fast as the machine allows. |
+| `test_default_stays_on_one_core_for_small_work` | Default stays on one core for small work. |
+| `test_an_explicit_count_is_used_as_given` | An explicit count is used as given. |
+| `test_default_without_joblib_runs_on_one_core_and_says_how` | Default without joblib runs on one core and says how. |
+| `test_batch_rqa_default_matches_one_core` | The default spreads the batch; the numbers do not move [DD-81]. |
+| `test_default_inside_a_worker_process_stays_on_one_core` | A batch called from the user's own parallel loop does not start one process per core in every worker [DD-126]. |
 
 ## 13. `test_preprocess.py` — Filtering and Hilbert
 

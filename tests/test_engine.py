@@ -211,6 +211,12 @@ def test_torch_engine_equals_the_reference_for_other_metrics(metric):
 
 
 @pytest.mark.requires("torch")
+def _bytes(precision):
+    from recurra.engine.torch_rqa import BYTES_PER_CELL
+
+    return BYTES_PER_CELL[precision]
+
+
 def test_batch_size_and_band_height_change_nothing():
     """G2, G5: one window per batch or all of them, whole plots or bands of
     three rows -- identical histograms."""
@@ -221,7 +227,8 @@ def test_batch_size_and_band_height_change_nothing():
         "one by one": rc.batch_rqa(X, rng=0, engine="torch", device="cpu",
                                    batch_size=1, return_histograms=True),
         "bands of 3": rc.batch_rqa(X, rng=0, engine="torch", device="cpu",
-                                   batch_size=2, device_memory_gb=389 * 3 * 2 * 48 / 1e9,
+                                   batch_size=2,
+                                   device_memory_gb=389 * 3 * 2 * _bytes("double") / 1e9,
                                    return_histograms=True),
     }
     ref_table, ref_hists = runs.pop("all at once")
@@ -337,3 +344,38 @@ def test_windowed_metrics_are_the_same_on_cuda():
     got = rc.windowed_recurrence(ss, spec, target_rr=0.05, rng=0).metrics(
         rqa=True, engine="torch", device="cuda:0")
     _same_tables(ref, got, "windowed metrics on cuda")
+
+
+def test_mixed_equals_double_on_coordinates_far_from_epsilon():
+    """The float32 band widens with the window's reach [DD-125]: two clusters
+    4000 apart with epsilon of order one would put float32 rounding (about
+    2.4e-4 of a coordinate) far outside a fixed 1e-4 band."""
+    pytest.importorskip("torch")
+    g = np.random.default_rng(0)
+    X = g.standard_normal((400, 3))
+    X[:200] += 2000.0
+    X[200:] -= 2000.0
+    W = np.stack([X, X[::-1].copy()])
+    kw = dict(rng=0, engine="torch", device="cpu", return_histograms=True)
+    d, hd = rc.batch_rqa(W, precision="double", **kw)
+    m, hm = rc.batch_rqa(W, precision="mixed", **kw)
+    assert d.equals(m)
+    for a, b in zip(hd, hm, strict=True):
+        for kind in ("diagonal", "vertical", "white_vertical"):
+            assert np.array_equal(getattr(a, kind), getattr(b, kind))
+
+
+def test_stage_profile_is_off_by_default_and_complete_when_on(monkeypatch):
+    """The benchmark's --profile switch: seconds per stage in the provenance,
+    nothing when it is off, and the same table either way."""
+    pytest.importorskip("torch")
+    import recurra.engine.torch_rqa as torch_rqa
+
+    X = _windows(200, count=2)
+    plain = rc.batch_rqa(X, rng=0, engine="torch", device="cpu")
+    assert "stage_seconds" not in plain.attrs["provenance"]
+    monkeypatch.setattr(torch_rqa, "PROFILE", True)
+    timed = rc.batch_rqa(X, rng=0, engine="torch", device="cpu")
+    stages = timed.attrs["provenance"]["stage_seconds"]
+    assert {"threshold", "decide", "vertical", "diagonal", "white_vertical"} <= set(stages)
+    assert plain.equals(timed)

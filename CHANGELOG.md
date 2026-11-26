@@ -28,6 +28,22 @@ comparing with. Changes that alter results are listed first.
   Installation and GPU tests: `docs/INSTALL.md`, sections 10 and 11.
 - Tests marked `cuda` run only where a GPU is; a `torch-cpu` CI job runs the
   rest of the engine suite on every push.
+- `tools/benchmark_engine.py` measures both engines, every precision and
+  device, and with `--profile` the seconds of each stage on the GPU.
+- Validated on two RTX 3090 (PyTorch 2.14.1, CUDA 13.0): the 27 `cuda` tests
+  pass, and one card computes 4 to 12 times faster than twenty CPU cores
+  (more for shorter windows); `mixed` is the fastest and gives the numbers of
+  `double`. In `mixed` the band of cells rechecked in double now widens with
+  how far a window's points reach from its centre, so the equality holds for
+  any data, not only clouds a few epsilons wide.
+
+**Changed: batches use every physical core by default** (DD-126)
+
+- With `n_jobs=None` (now the default of `Config.n_jobs`), `batch_rqa` on the
+  CPU, `batch_windowed_recurrence` and the batch `metrics()` with RQA,
+  dynamics or invariants start one worker process per physical core when the
+  batch is large enough to gain from it, and say so once. `n_jobs=1` keeps
+  one core. The numbers do not change.
 
 **Changes that alter results**
 

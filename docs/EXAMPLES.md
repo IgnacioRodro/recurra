@@ -760,7 +760,8 @@ subjects = {f"sub{i:02d}": build_space(i) for i in range(100)}
 batch = rc.batch_windowed_recurrence(
     subjects, rc.WindowSpec(n_windows=10, overlap=0.5),
     target_rr=0.05, theiler=1, rng=0, progress=True,
-    n_jobs=-1)                       # every core; the result is unchanged [DD-81]
+    n_jobs=None)    # the default: every physical core when it pays [DD-126];
+                    # the result is unchanged whatever the count [DD-81]
 
 batch.n_matrices        # 1000
 m = batch.metrics()     # one tidy row per subject and window
@@ -845,8 +846,9 @@ table = rc.batch_rqa(X, target_rr=0.05, theiler=1, rng=0)               # engine
 print(table[["window", "epsilon", "RR", "DET", "LAM"]])
 print(table.attrs["provenance"]["engine"])         # which engine ran, and on what
 
-# the same table, on the reference engine with 20 worker processes
-same = rc.batch_rqa(X, target_rr=0.05, rng=0, engine="numpy", n_jobs=20)
+# the same table on the reference engine: by default one worker process per
+# physical core, announced once [DD-126]; n_jobs=1 for one core, or any number
+same = rc.batch_rqa(X, target_rr=0.05, rng=0, engine="numpy")
 
 # on a GPU, insisting on it (an error if PyTorch sees no device: never a
 # silent fall back to the CPU)

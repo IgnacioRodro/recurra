@@ -5,6 +5,7 @@
     python tools/benchmark_engine.py --jobs 1 8 20 --out bench.csv
     python tools/benchmark_engine.py --engines numpy torch --devices cuda:0
     python tools/benchmark_engine.py --quick                 # a smoke run, seconds
+    python tools/benchmark_engine.py --engines torch --profile   # where the GPU time goes
 
 Every number in the decision records about speed comes from this script, so it
 measures what an analysis does: many windows of a three-dimensional
@@ -28,6 +29,11 @@ the CSV file as soon as it is measured (with the versions and the machine),
 and the printed lines go to a ``.txt`` file next to it, so an interrupted run
 keeps what it measured.
 
+``--profile`` also times each stage of the torch engine (thresholds, the
+decisions, each kind of line, copying back), waiting for the device at every
+stage boundary, which slows it a little; the seconds go to the ``stages``
+column and to the printed lines.
+
 Thread counts: set ``OPENBLAS_NUM_THREADS=1`` (and ``MKL_NUM_THREADS=1`` with
 MKL) before running, or the worker processes fight over the cores.
 """
@@ -49,7 +55,7 @@ import recurra as rc
 
 FIELDS = ["recurra", "engine", "device", "precision", "measurement", "n_points",
           "dim", "windows", "n_jobs", "seconds", "windows_per_s", "threshold_s",
-          "plot_and_histogram_s", "peak_device_memory_gb", "batch_size", "python",
+          "plot_and_histogram_s", "peak_device_memory_gb", "batch_size", "stages", "python",
           "numpy", "torch", "cpu_count",
           "physical_cores", "blas_threads", "platform"]
 
@@ -113,6 +119,8 @@ def main(argv=None) -> int:
     p.add_argument("--no-windowed", action="store_true",
                    help="skip the batch_windowed_recurrence measurement")
     p.add_argument("--out", default="benchmark_engine.csv", help="CSV file to write")
+    p.add_argument("--profile", action="store_true",
+                   help="time each stage of the torch engine (a little slower)")
     p.add_argument("--quick", action="store_true",
                    help="two small sizes and one job, to check the script runs")
     a = p.parse_args(argv)
@@ -135,6 +143,10 @@ def main(argv=None) -> int:
         import torch
 
         torch_version = torch.__version__
+    if a.profile:
+        import recurra.engine.torch_rqa as torch_rqa
+
+        torch_rqa.PROFILE = True
 
     out = pathlib.Path(a.out)
     txt = out.with_suffix(".txt")
@@ -192,13 +204,19 @@ def main(argv=None) -> int:
                     prov = table.attrs["provenance"]
                     peak = prov.get("peak_device_memory_gb")
                     batch = prov.get("batch_size", {}).get(n)
+                    st = prov.get("stage_seconds")
                     record(engine="torch", device=dev, precision=prec,
                            measurement="batch_rqa", n_points=n, windows=count, n_jobs=1,
                            seconds=s, windows_per_s=count / s,
-                           peak_device_memory_gb=peak, batch_size=batch)
+                           peak_device_memory_gb=peak, batch_size=batch,
+                           stages=";".join(f"{k}={v}" for k, v in st.items()) if st else "")
                     say(f"N={n:6d}  batch_rqa torch on {dev}, {prec}: {count} windows in "
                         f"{s:8.2f} s, {count / s:9.2f} windows/s "
                         f"(batches of {batch}, peak {peak} GB)")
+                    if st:
+                        total = sum(st.values()) or 1.0
+                        say("          stages: " + ", ".join(
+                            f"{k} {v:.2f} s ({100 * v / total:.0f}%)" for k, v in st.items()))
         if "numpy" in a.engines and not a.no_windowed:
             for k in jobs:
                 records = max(k, 2)

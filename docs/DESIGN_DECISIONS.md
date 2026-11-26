@@ -89,7 +89,7 @@ Status: `accepted` · `provisional` · `revised` · `rejected`
 | [DD-79](#dd-79) | Single precision is a choice, not a default | revised | F7 |
 | [DD-80](#dd-80) | **Decimation changes the metrics, not just the cost** | accepted | F7 |
 | [DD-81](#dd-81) | **Parallelism must not change the answer** | accepted | F7 |
-| [DD-82](#dd-82) | Parallelise across units, not inside one | accepted, revised in 0.26 | F7 |
+| [DD-82](#dd-82) | Parallelise across units, not inside one | accepted, revised in 0.26 (default: DD-126) | F7 |
 | [DD-83](#dd-83) | **Windows of one subject are not independent samples** | accepted | F13 |
 | [DD-84](#dd-84) | Everything that learns goes inside the fold | accepted | F13 |
 | [DD-85](#dd-85) | Imbalanced-aware scores, with a baseline | accepted | F13 |
@@ -132,7 +132,8 @@ Status: `accepted` · `provisional` · `revised` · `rejected`
 | [DD-122](#dd-122) | **Epsilon is never an observed distance; a small sample is the whole population** | accepted | F17 |
 | [DD-123](#dd-123) | A raw 2-D array is always (n_points, n_dimensions) | accepted | F17 |
 | [DD-124](#dd-124) | **Line histograms by whole-array operations over full-width bands** | accepted | F17 |
-| [DD-125](#dd-125) | **Two engines, one answer: the torch engine and `engine="auto"`** | accepted (CUDA validation pending) | F17 |
+| [DD-125](#dd-125) | **Two engines, one answer: the torch engine and `engine="auto"`** | accepted, validated on CUDA | F17 |
+| [DD-126](#dd-126) | **By default a batch uses every physical core** | accepted | F17 |
 
 ---
 
@@ -3147,7 +3148,8 @@ one core at 2560 points and 11 times at 10 240 with 20 workers, and no more
 with 38: the second hardware thread of a core adds nothing to this work. So
 `backend="auto"` now means processes; `"thread"` remains available. Results
 do not change: with 38 processes the RQA was identical to the serial run. Use
-the number of physical cores for `n_jobs`; `recurra doctor` prints it.
+the number of physical cores for `n_jobs`; `recurra doctor` prints it. Since
+[DD-126] the batch functions do that by default.
 
 ---
 
@@ -5019,8 +5021,8 @@ materialises.
 <a id="dd-125"></a>
 ## DD-125 · Two engines, one answer: the torch engine and `engine="auto"`
 
-**Status:** accepted (0.26.0); the CUDA part is validated by running the
-`cuda` tests and the benchmark on a machine with a GPU. Replaces the plan of
+**Status:** accepted (0.26.0), validated on CUDA (two RTX 3090, PyTorch
+2.14.1 with CUDA 13.0: the 27 `cuda` tests pass). Replaces the plan of
 [DD-16]; revises [DD-33] for the sampled distances.
 
 **Context.** A long-term iEEG study needs the RQA of tens of millions of
@@ -5079,10 +5081,16 @@ there and the CPU, at its best, when it is not.
      and no float atomics, so counts cannot depend on scheduling, batch size,
      band height or device.
 5. **Precision.** `double` is the default, as on the CPU. `single` decides in
-   float32 and counts the cells within 1e-4 of epsilon; `mixed` recomputes
-   exactly those in float64, which restores the double decision. On cards
-   whose float64 is slow (1/64 of float32 on an RTX 3090) mixed is the fast
-   exact option; which is faster in practice is for the benchmark to say.
+   float32 and counts the cells near epsilon; `mixed` recomputes exactly
+   those in float64, which restores the double decision. "Near" is a band
+   per window, `max(1e-4, 16 u d (2 R/eps + 1))` relative to epsilon, with
+   `u = 2^-24`, `d` the dimension and `R` the largest centred coordinate:
+   rounding the coordinates to float32 cannot move a distance by more than
+   about `2 u d (2R + eps)`, so no cell outside the band can be decided
+   differently in float32 and float64. A fixed 1e-4 was enough for clouds a
+   few epsilons wide and not for one whose points sit thousands of epsilons
+   from its centre (two clusters 4000 apart). On cards whose float64 is slow
+   (1/64 of float32 on an RTX 3090) mixed is the fast exact option.
 6. **Memory and devices.** Batches and bands are sized from
    `Config.gpu_memory_budget_gb` (8 GB by default) or `device_memory_gb`, and a
    window whose single row does not fit raises `MemoryBudgetError` with the
@@ -5119,7 +5127,72 @@ equal to double on a cloud offset by 50; the windowed path identical on a
 phase-amplitude space. A deliberate error in the white-line rule fails 10 of
 the 14 equivalence cases (the other four have no Theiler band).
 
+**Measured on CUDA** (compute300: 2 x Xeon Silver 4210R, 20 physical cores;
+RTX 3090 24 GB; `tools/benchmark_engine.py`, 200 windows per size on the GPU,
+the CPU with 20 worker processes). One card against the twenty cores: about
+10.7 times faster in double and 12.5 in mixed at 1280 points, 5.8 and 6.7 at
+2560, 4.1 and 4.9 at 5120, 4.9 and 5.9 at 10 240. Mixed runs at the speed of
+single and 15 to 20 % faster than double, with the same numbers. The peak
+device memory stayed under the 8 GB budget (about 5.3 GB in double, 3.5 GB
+in mixed), so the planning constants were tightened to what was measured
+plus a margin. For the long-term study above, mixed on both cards brings a
+pair of bands to about 10 hours with 10-second windows and 15 hours with
+20-second windows, from 2.5 and 3.8 days. The size at which the device stops
+paying (`AUTO_MIN_POINTS`) is still to be measured below 1280 points.
+
 **Consequences.** Results of the reference path move only through the fixed
 order of the sampled distances (some epsilons in their last bit). Tests:
 `tests/test_engine.py`; the `torch-cpu` CI job runs them on every push, and
 the `cuda` ones run where a GPU is (`docs/INSTALL.md`, section 11).
+
+---
+
+<a id="dd-126"></a>
+## DD-126 · By default a batch uses every physical core
+
+**Status:** accepted (0.26.0). Revises the default of `Config.n_jobs`
+([DD-05], [DD-82]).
+
+**Context.** `n_jobs=None` meant one core. On the 20-core server a batch of
+RQA windows on the CPU ran 11 to 13 times faster with 20 worker processes,
+and nobody gets that unless they know to ask. The library is meant for many
+users, most of whom will not read about `n_jobs`; the default should be the
+fastest correct computation the machine allows. Whether a shared server can
+spare every core is for whoever runs the job to decide, and the setting is
+one argument away.
+
+**Decision.**
+
+1. `Config.n_jobs` defaults to `None`. With `None`, the batch functions --
+   `batch_rqa` on the numpy engine, `batch_windowed_recurrence` and
+   `BatchWindowedRecurrence.metrics()` when RQA, dynamics or invariants are
+   asked for -- use one worker process per **physical** core (hardware threads
+   gave nothing, [DD-82]), never more than there are items.
+2. Only when it pays: below `AUTO_PARALLEL_CELLS` (5 x 10^7 cells of
+   recurrence plot, about a second of one core) or with a single item, the
+   batch stays on one core, since starting processes would cost more than it
+   saves.
+3. Announced once per worker count with a `CaveatWarning` that says how to
+   change it. Without joblib the batch runs on one core and the warning says
+   how to install it.
+4. A number, in the call or in `set_config(n_jobs=...)`, is used as given.
+   `1` is one core; `-1` keeps its meaning of every logical core.
+5. Everything else that takes `n_jobs` keeps `None` meaning one core: those
+   are single computations, not batches.
+6. On the torch engine nothing changes: the records go one after another and
+   the device batches their windows ([DD-125]).
+7. Inside a worker process (a batch called from the user's own parallel
+   loop, `parallel_map` included) the default is one core, so the cores are
+   not asked for once per worker.
+
+**Alternatives rejected.** *Keep one core and document `n_jobs`*: the
+default would stay the slowest choice for everyone who does not read the
+documentation. *Every logical core*: no faster than the physical ones on
+this work and twice the memory. *Leave one core free*: a policy for shared
+machines, which the user can set; the library should not guess it.
+
+**Consequences.** The numbers do not change: each item has its own random
+stream fixed by position [DD-81], and `tests/test_parallel.py` checks that
+the default and one core give identical tables. The test suite pins
+`n_jobs=1` in `tests/conftest.py`, because `pytest -n auto` already puts a
+test on every core.
