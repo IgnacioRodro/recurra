@@ -210,13 +210,13 @@ def test_torch_engine_equals_the_reference_for_other_metrics(metric):
     _same_tables(ref, got, metric)
 
 
-@pytest.mark.requires("torch")
 def _bytes(precision):
     from recurra.engine.torch_rqa import BYTES_PER_CELL
 
     return BYTES_PER_CELL[precision]
 
 
+@pytest.mark.requires("torch")
 def test_batch_size_and_band_height_change_nothing():
     """G2, G5: one window per batch or all of them, whole plots or bands of
     three rows -- identical histograms."""
