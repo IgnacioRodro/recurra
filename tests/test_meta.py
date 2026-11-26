@@ -83,3 +83,14 @@ def test_cross_and_joint_meta_recurrence():
     assert crp.kind == "crp" and crp.shape == (60, 60)
     jrp = rc.meta_recurrence([a, b], kind="jrp", target_rr=0.3, rng=0)
     assert jrp.theiler == 2 and jrp.shape == (60, 60)
+
+
+@pytest.mark.requires("matplotlib")
+def test_the_panel_draws_a_meta_plot_with_more_metrics_than_windows():
+    """Regression: 13 metrics over 12 windows were transposed and failed."""
+    t = _table(n=12)
+    for k in range(11):
+        t[f"m{k}"] = np.random.default_rng(k).standard_normal(12)
+    rm = rc.meta_recurrence(t, target_rr=0.3, rng=0)
+    assert rm.coords.shape == (12, 13)
+    assert rc.plot_recurrence_panel(rm) is not None

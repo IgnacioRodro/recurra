@@ -60,9 +60,11 @@ def _coordinate_labels(groups, dim: int) -> list[str]:
 
 def _traces(coords, groups, max_traces: int):
     """Up to ``max_traces`` coordinates, each z-scored, with their labels."""
-    X = np.atleast_2d(np.asarray(coords, dtype=float))
-    if X.shape[0] < X.shape[1]:
-        X = X.T
+    # Rows are time points, always. A 1-D signal is one column. (Guessing the
+    # orientation from the shape transposed a meta-space with more metrics
+    # than windows -- 13 columns over 12 windows -- and broke the panel.)
+    X = np.asarray(coords, dtype=float)
+    X = X[:, None] if X.ndim == 1 else X.reshape(X.shape[0], -1)
     labels = _coordinate_labels(groups, X.shape[1])
     k = min(max_traces, X.shape[1])
     Z = X[:, :k]

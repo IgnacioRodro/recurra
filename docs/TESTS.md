@@ -41,7 +41,7 @@ python examples/run_all.py        # 54 figures, 45 tables, 3 run reports
 | 7 | `test_export.py` | CSV export | DD-10 | 4 |
 | 8 | `test_images.py` | test_images.py |  | 16 |
 | 9 | `test_ingest.py` | Ingestion | DD-08, DD-06 | 12 |
-| 10 | `test_meta.py` | test_meta.py |  | 6 |
+| 10 | `test_meta.py` | test_meta.py |  | 7 |
 | 11 | `test_parallel.py` | test_parallel.py |  | 7 |
 | 12 | `test_preprocess.py` | Filtering and Hilbert | DD-11, DD-12 | 10 |
 | 13 | `test_realdata.py` | test_realdata.py |  | 15 |
@@ -54,9 +54,9 @@ python examples/run_all.py        # 54 figures, 45 tables, 3 run reports
 | 20 | `test_statespace.py` | State space construction | DD-21, DD-23, DD-25, DD-28 | 50 |
 | 21 | `test_threshold.py` | Threshold selection | DD-32, DD-35 | 18 |
 | 22 | `test_validation.py` | test_validation.py |  | 26 |
-| 23 | `test_viz.py` | Figures | DD-27, DD-30, DD-31, DD-38, DD-49..52 | 39 |
+| 23 | `test_viz.py` | Figures | DD-27, DD-30, DD-31, DD-38, DD-49..52 | 41 |
 | 24 | `test_windowed.py` | Windowed analysis | DD-39, DD-40, DD-41 | 49 |
-| | | | **total** | **510 functions** |
+| | | | **total** | **513 functions** |
 
 Parametrised tests expand to more cases; run `pytest -q` for the count.
 
@@ -310,6 +310,7 @@ Decisions: DD-08, DD-06
 | `test_meta_recurrence_from_a_windowed_analysis` | Meta recurrence from a windowed analysis. |
 | `test_missing_windows_are_dropped_with_a_warning` | Missing windows are dropped with a warning. |
 | `test_cross_and_joint_meta_recurrence` | Cross and joint meta recurrence. |
+| `test_the_panel_draws_a_meta_plot_with_more_metrics_than_windows` | Regression: 13 metrics over 12 windows were transposed and failed. |
 
 ## 11. `test_parallel.py` — test_parallel.py
 
@@ -693,6 +694,8 @@ Decisions: DD-27, DD-30, DD-31, DD-38, DD-49..52
 | `test_the_panel_draws_every_kind_of_plot` | RP, CRP, JRP and meta-RP all render with their signals in the margins. |
 | `test_the_panel_accepts_raw_signals_for_its_margins` | The panel accepts raw signals for its margins. |
 | `test_the_joint_figure_refuses_a_plain_plot` | The joint figure refuses a plain plot. |
+| `test_a_matrix_renders_the_same_stored_or_streamed` _(×2)_ | Regression: with a size that is not a multiple of the reduction factor the stored path cropped the remainder and the streamed path kept it, so the images differed by a pixel and plot_joint_recurren... |
+| `test_the_joint_figure_draws_an_odd_sized_plot` | The joint figure draws an odd sized plot. |
 
 ## 24. `test_windowed.py` — Windowed analysis
 

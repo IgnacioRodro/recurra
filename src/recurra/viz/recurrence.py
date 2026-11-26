@@ -64,11 +64,21 @@ def pool_matrix(M: np.ndarray, max_size: int = 1200, method: str = "max"):
         method = choose_pooling(factor, float(M.mean()))
     if factor == 1 or method == "none":
         return M.astype(float), 1, "none"
-    ny, mx = n // factor * factor, m // factor * factor
-    blocks = M[:ny, :mx].astype(float).reshape(ny // factor, factor,
-                                               mx // factor, factor)
-    reduced = blocks.max(axis=(1, 3)) if method == "max" else blocks.mean(axis=(1, 3))
-    return reduced, factor, method
+    # The last block keeps whatever samples are left, as the streamed path of
+    # render_recurrence does. Before 0.25 the remainder was cropped here and
+    # kept there, so one matrix gave a 578-pixel image in memory and a
+    # 579-pixel one streamed, and plot_joint_recurrence failed on any size
+    # that was not a multiple of the reduction factor.
+    ny, mx = -(-n // factor) * factor, -(-m // factor) * factor
+    padded = np.zeros((ny, mx), dtype=float)
+    padded[:n, :m] = M
+    blocks = padded.reshape(ny // factor, factor, mx // factor, factor)
+    if method == "max":
+        return blocks.max(axis=(1, 3)), factor, method
+    present = np.zeros((ny, mx), dtype=float)
+    present[:n, :m] = 1.0
+    counts = present.reshape(ny // factor, factor, mx // factor, factor).sum(axis=(1, 3))
+    return blocks.sum(axis=(1, 3)) / counts, factor, method
 
 
 def render_recurrence(rm, *, max_size: int = 1200, pooling: str = "auto"):

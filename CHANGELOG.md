@@ -70,6 +70,14 @@ Pre-release audit. Changes that alter results are listed first.
 
 **Fixed**
 
+- **A recurrence plot rendered one pixel smaller when stored than when
+  streamed** whenever its size was not a multiple of the display reduction
+  factor: `pool_matrix` cropped the remainder that the streamed path kept.
+  `plot_joint_recurrence` failed on such sizes (found by running the
+  cookbook end to end). Both paths now keep the partial last block.
+- `plot_recurrence_panel` transposed a meta-space with more metrics than
+  windows (13 over 12) and failed; coordinates are now always read as
+  (points, dimensions).
 - **D2 could lock onto the saturating plateau of the correlation sum [DD-121].**
   On a Lorenz trajectory 1e-9 away from the test's, it returned 1.61 against
   2.05, unflagged. The automatic search now stays where `C(r) <= max_C`

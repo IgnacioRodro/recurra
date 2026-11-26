@@ -528,3 +528,25 @@ def test_the_joint_figure_refuses_a_plain_plot(ss_pac):
     rm = rc.recurrence_plot(ss_pac.subsample(max_points=200), target_rr=0.05, rng=0)
     with pytest.raises(rc.ParameterError, match="joint"):
         rc.plot_joint_recurrence(rm)
+
+
+@pytest.mark.parametrize("pooling", ["max", "mean"])
+def test_a_matrix_renders_the_same_stored_or_streamed(pooling):
+    """Regression: with a size that is not a multiple of the reduction factor
+    the stored path cropped the remainder and the streamed path kept it, so
+    the images differed by a pixel and plot_joint_recurrence failed."""
+    from recurra.viz.recurrence import render_recurrence
+
+    X = rc.lorenz(n_points=1157, dt=0.02)
+    stored = rc.recurrence_plot(X, target_rr=0.05, store="memory", rng=0)
+    streamed = rc.recurrence_plot(X, target_rr=0.05, store="stream", rng=0)
+    a, fa, _ = render_recurrence(stored, max_size=800, pooling=pooling)
+    b, fb, _ = render_recurrence(streamed, max_size=800, pooling=pooling)
+    assert fa == fb == 2 and a.shape == b.shape == (579, 579)
+    np.testing.assert_allclose(a, b)
+
+
+def test_the_joint_figure_draws_an_odd_sized_plot():
+    X = rc.lorenz(n_points=1157, dt=0.02)
+    jrp = rc.joint_recurrence_plot([X[:, :1], X[:, 1:]], target_rr=0.1, rng=0)
+    assert rc.plot_joint_recurrence(jrp, max_size=800) is not None
