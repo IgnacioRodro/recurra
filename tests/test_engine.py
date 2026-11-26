@@ -377,7 +377,7 @@ def test_stage_profile_is_off_by_default_and_complete_when_on(monkeypatch):
     monkeypatch.setattr(torch_rqa, "PROFILE", True)
     timed = rc.batch_rqa(X, rng=0, engine="torch", device="cpu")
     stages = timed.attrs["provenance"]["stage_seconds"]
-    assert {"threshold", "decide", "vertical", "diagonal", "white_vertical"} <= set(stages)
+    assert {"threshold", "decide", "vertical_and_white", "diagonal"} <= set(stages)
     assert plain.equals(timed)
 
 

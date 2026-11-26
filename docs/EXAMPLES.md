@@ -868,8 +868,21 @@ table = rc.windowed_recurrence(ss, rc.WindowSpec(size=10, overlap=0.5, unit="sec
 print(table.attrs["engine"])
 ```
 
-For worker processes, use the physical cores (`recurra doctor` prints how
-many): a second hardware thread per core gave nothing for this work.
+Two GPUs: one process per device, each with its share of the windows. With
+an integer seed the thresholds depend only on the window length, so how the
+windows are split changes no number:
+
+```python
+# run.py -- started twice:  CUDA_VISIBLE_DEVICES=0 python run.py 0
+#                           CUDA_VISIBLE_DEVICES=1 python run.py 1
+import sys
+part = int(sys.argv[1])
+table = rc.batch_rqa(X[part::2], target_rr=0.05, theiler=1, rng=0,
+                     engine="torch", device="cuda:0")   # each sees its card as cuda:0
+```
+
+On the CPU the batch functions already use one worker process per physical
+core (`recurra doctor` prints how many) [DD-126].
 
 ## 8c. Comparability across subjects [DD-42, DD-43, DD-44]
 

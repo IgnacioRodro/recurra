@@ -134,7 +134,7 @@ Status: `accepted` · `provisional` · `revised` · `rejected`
 | [DD-124](#dd-124) | **Line histograms by whole-array operations over full-width bands** | accepted | F17 |
 | [DD-125](#dd-125) | **Two engines, one answer: the torch engine and `engine="auto"`** | accepted, validated on CUDA | F17 |
 | [DD-126](#dd-126) | **By default a batch uses every physical core** | accepted | F17 |
-| [DD-127](#dd-127) | **The device searches lines using the symmetry of the plot, and fuses its float32 decisions** | accepted (CUDA measurement pending) | F17 |
+| [DD-127](#dd-127) | **The device searches lines using the symmetry of the plot, and fuses its float32 decisions** | accepted, measured on CUDA | F17 |
 
 ---
 
@@ -5221,8 +5221,9 @@ test on every core.
 <a id="dd-127"></a>
 ## DD-127 · The device searches lines using the symmetry of the plot, and fuses its float32 decisions
 
-**Status:** accepted (0.26.0); the speed on CUDA is to be measured. Revises
-the line search of [DD-125]; changes no result.
+**Status:** accepted (0.26.0), measured on CUDA (RTX 3090: the 30 `cuda`
+tests pass, 1.3 to 2.0 times faster). Revises the line search of [DD-125];
+changes no result.
 
 **Context.** Profiled on an RTX 3090 (mixed precision, windows of 10 240
 points, [DD-125]): 32 % of the time deciding the cells and 20 to 23 % for
@@ -5242,9 +5243,12 @@ separate pass over the band for every difference, square and sum.
    bit, in every precision, fused or not. So:
    - column `j` is row `j`: the vertical and the white vertical lines are the
      runs along the rows, each of which lies whole inside one band, with no
-     transposed copy and nothing carried between bands. A white run is
-     dropped when the cell before or after it lies in the Theiler band, the
-     rule of [DD-57] read along the row;
+     transposed copy and nothing carried between bands. Both are found in one
+     search: each cell is recurrent, not recurrent or in the Theiler band,
+     each row is padded with a fourth state, and consecutive changes bound
+     one run whose state is that of its first cell. A white run is dropped
+     when the cell before or after it lies in the Theiler band, the rule of
+     [DD-57] read along the row;
    - the diagonal at `+k` is the diagonal at `-k`: only the diagonals
      `k >= max(1, w)` are searched (one padded copy of the right part of each
      band) and their counts doubled; the main diagonal, when `w = 0`, is
@@ -5281,6 +5285,27 @@ including two clouds 4000 apart. On the CPU the three line searches took
 Tests: `tests/test_engine.py`; the `cuda` test
 `test_cuda_fused_and_plain_decisions_agree` checks on the GPU that the
 fusion ran and changed nothing.
+
+**Measured on CUDA** (RTX 3090, mixed precision, 200 windows per size;
+`docs/data/benchmarks/gpu_rtx3090_0.26.0.dev0_dd127.txt`). Windows per second
+before this decision, with the symmetric search alone, and with the fused
+decisions as well:
+
+| points | before | symmetry | symmetry + fused | gain |
+|---:|---:|---:|---:|---:|
+| 1280 | 795 | 938 | 1010 | 1.27 |
+| 2560 | 271 | 360 | 454 | 1.68 |
+| 5120 | 74.7 | 103 | 138 | 1.84 |
+| 10 240 | 17.9 | 25.2 | 36.4 | 2.03 |
+
+Double precision, which is not fused, gained 1.2 to 1.4 times from the
+symmetric search. The fused decisions also lowered the peak device memory in
+mixed from about 5.3 to 3.3 GB. At 10 240 points the deciding went from 3.45
+to 1.05 s for 200 windows and the diagonals from 2.46 to 0.99 s; the vertical
+and white vertical searches, from 2.12 and 2.22 s to 1.44 and 1.56 s, are now
+over half of the time. The single search for both (decision 1, added after
+this measurement) took them on the CPU from 0.09 to 0.06 s for four windows
+of 2000 points; its effect on CUDA is in the release benchmark.
 
 **Consequences.** No result changes. The first call on a CUDA device per
 metric and dimension compiles the kernel (seconds to a minute; cached on

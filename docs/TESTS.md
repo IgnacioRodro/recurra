@@ -36,7 +36,7 @@ python examples/run_all.py        # 54 figures, 45 tables, 3 run reports
 | 2 | `test_classify.py` | test_classify.py |  | 25 |
 | 3 | `test_cli.py` | test_cli.py |  | 3 |
 | 4 | `test_comparability.py` | Comparability and groups | DD-42, DD-43, DD-44 | 29 |
-| 5 | `test_docs.py` | The living documents | DD-45 | 18 |
+| 5 | `test_docs.py` | The living documents | DD-45 | 19 |
 | 6 | `test_dynamics.py` | test_dynamics.py |  | 63 |
 | 7 | `test_engine.py` | test_engine.py |  | 28 |
 | 8 | `test_export.py` | CSV export | DD-10 | 4 |
@@ -57,7 +57,7 @@ python examples/run_all.py        # 54 figures, 45 tables, 3 run reports
 | 23 | `test_validation.py` | test_validation.py |  | 26 |
 | 24 | `test_viz.py` | Figures | DD-27, DD-30, DD-31, DD-38, DD-49..52 | 41 |
 | 25 | `test_windowed.py` | Windowed analysis | DD-39, DD-40, DD-41 | 49 |
-| | | | **total** | **561 functions** |
+| | | | **total** | **562 functions** |
 
 Parametrised tests expand to more cases; run `pytest -q` for the count.
 
@@ -177,6 +177,7 @@ Decisions: DD-45
 | `test_example_index_names_the_figures_the_scripts_save` | Every filename an example writes must be described in the index. Catches the drift that matters: a figure added to a script and never documented, or one documented after being removed. |
 | `test_documented_metrics_all_exist` | A metric named in the documents must exist in the code [DD-45]. This check exists because it did not. Two implementations of the RQA layer both passed their own suites while exporting different met... |
 | `test_the_version_is_not_stale` | It sat at 0.1.0.dev0 through nineteen delivered builds. An installed copy could not be told apart from any other, which is exactly what a version string exists to prevent. |
+| `test_install_lines_pin_the_latest_release` | README and INSTALL tell people which tag to install. In 0.25 they named the previous one for a while, with nothing to notice. |
 
 ## 6. `test_dynamics.py` — test_dynamics.py
 

@@ -8,8 +8,8 @@ before a public release. Decisions referenced by ID live in
 [`DESIGN_DECISIONS.md`](DESIGN_DECISIONS.md); the module map and the status of
 every module live in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-State at the 0.25.0 release: every phase except F11 and F12 implemented and
-tested (the test count lives in [`ARCHITECTURE.md`](ARCHITECTURE.md), where a
+State at the 0.26.0 release: every phase except F11 and F12 implemented and
+tested, and recurrence plots computed on a GPU when there is one (the test count lives in [`ARCHITECTURE.md`](ARCHITECTURE.md), where a
 test keeps it true); one complete real study carried end to end (49 children,
 32-channel EEG at 500 Hz, two recording blocks, delta and theta envelope
 dynamics, subject-level classification).
@@ -25,7 +25,7 @@ dynamics, subject-level classification).
 | I7 | `ingest` a precomputed recurrence matrix | Capability `RECURRENCE` without a state space; RQA must run on it |
 | I10 | `ingest` a `Corpus` object | `read_corpus` already returns a `CorpusIndex`; the missing piece is passing it straight to the batch layer |
 | I11 | Memory-mapped, lazy raw data | For corpora that do not fit in memory; the recurrence layer is already lazy |
-| DD-16 | GPU backend (PyTorch) | Replaced by DD-125 in 0.26: the torch engine for recurrence plots, `engine="auto"`, the same answer as the CPU by construction. Validated on two RTX 3090; `AUTO_MIN_POINTS` and the mixed default measured. Pending: a faster device kernel (fused decisions, line searches using the symmetry of the plot); cross and joint plots, FAN and per-block thresholds on the device; thresholds of `windowed_recurrence` on the device |
+| DD-16 | GPU backend (PyTorch) | Done in 0.26 for recurrence plots (DD-125, DD-127): `engine="auto"`, the same answer as the CPU by construction, validated on two RTX 3090. Still to do on the device: cross and joint plots, FAN and per-block thresholds, the cosine metric, the thresholds of `windowed_recurrence`, two GPUs from one call; on the CPU, the symmetric line search of DD-127 (it needs plots symmetric to the last bit, which the norm expansion of DD-33 does not guarantee) |
 | F6 leftovers | RQA measures `T1`, `T2`, `TREND`, `CLEAR`; recurrence-network measures (transitivity, clustering, average path length) | Planned with the line histograms and never written |
 | Validation | DET and LAM against published reference values for the standard systems | D2 and lambda_1 of Lorenz are already checked |
 | DD-54, DD-60 | Two decisions still `provisional` | The joint independence ratio as a coupling detector in time; RQA against the geometric index. Both measured on synthetic data only |

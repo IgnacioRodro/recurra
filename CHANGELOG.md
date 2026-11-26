@@ -2,63 +2,28 @@
 
 All notable changes to this project. Language policy: English throughout [DD-30].
 
-## [0.26.0.dev0] — unreleased
+## [0.26.0] — 2026-11-26
 
-The GPU engine (DD-125), and what it needed first: the measurement rules a
-second engine has to agree with, and a CPU path fast enough to be worth
-comparing with. Changes that alter results are listed first.
+The GPU engine. With a CUDA device and PyTorch, the RQA of many windows runs
+on the GPU and gives the CPU's numbers: on an RTX 3090 one card did 9 to 16
+times the work of twenty CPU cores, for windows of 1280 to 10 240 points
+(DD-125, DD-127). Without a GPU nothing is needed and the CPU path is faster
+than in 0.25, and uses every physical core by default (DD-124, DD-126). Before
+the engine, the measurement rules a second engine has to agree with were
+fixed (DD-122, DD-123). Changes that alter results are listed first.
 
-**New: the torch engine and `engine="auto"`** (DD-125)
+**Upgrading from 0.25**
 
-- `batch_rqa(windows, ...)`: the RQA of many windows in one call, one row per
-  window, each equal to the single-plot path with the same integer seed.
-- `engine="auto"` (the default of `batch_rqa` and of `metrics()`) runs on the
-  first CUDA device when PyTorch sees one and the windows have at least 128
-  points (the GPU was measured faster at every size from there up), and on
-  the CPU otherwise; with a device present the choice is
-  announced once and always recorded in the provenance. `engine="torch"`
-  insists on the device and fails rather than fall back; `engine="numpy"` is
-  the reference.
-- The same answer by construction: thresholds bit for bit (the device sorts,
-  numpy does the deciding arithmetic), histograms count for count (integer
-  counts only, no matrix products, TF32 off and recorded), whatever the batch
-  size, band height or device. Precisions `mixed` (the default: single, with
-  the cells near epsilon recomputed in double, so the numbers of `double`,
-  faster), `double` and `single`.
-- New `gpu` extra (PyTorch), `Config.gpu_memory_budget_gb`, `recurra doctor`
-  reports the CUDA devices, the choice of `auto` and the physical cores.
-  Installation and GPU tests: `docs/INSTALL.md`, sections 10 and 11.
-- Tests marked `cuda` run only where a GPU is; a `torch-cpu` CI job runs the
-  rest of the engine suite on every push.
-- `tools/benchmark_engine.py` measures both engines, every precision and
-  device, and with `--profile` the seconds of each stage on the GPU.
-- Validated on two RTX 3090 (PyTorch 2.14.1, CUDA 13.0): the 27 `cuda` tests
-  pass, and one card computes 4 to 12 times faster than twenty CPU cores
-  (more for shorter windows); `mixed` is the fastest and gives the numbers of
-  `double`. In `mixed` the band of cells rechecked in double now widens with
-  how far a window's points reach from its centre, so the equality holds for
-  any data, not only clouds a few epsilons wide.
-
-**Faster on the GPU, same numbers** (DD-127)
-
-- The device finds the lines using the symmetry of the plot: the vertical and
-  white vertical lines along the rows, inside one band and without copies,
-  the diagonals in the upper half only. On the CPU build of PyTorch the line
-  search became 2.4 times faster; the gain on CUDA is to be measured.
-- On CUDA, the float32 decisions of `mixed` and `single` run as one kernel
-  compiled with `torch.compile` (the first call compiles it; cached on disk).
-  If that fails the engine says so once and decides without it.
-  `Config.gpu_compile` switches it off. The provenance records
-  `fused_decisions`.
-- `tools/benchmark_engine.py --fusion both` measures with and without it.
-
-**Changed: batches use every physical core by default** (DD-126)
-
-- With `n_jobs=None` (now the default of `Config.n_jobs`), `batch_rqa` on the
-  CPU, `batch_windowed_recurrence` and the batch `metrics()` with RQA,
-  dynamics or invariants start one worker process per physical core when the
-  batch is large enough to gain from it, and say so once. `n_jobs=1` keeps
-  one core. The numbers do not change.
+- Results move only where a decision was arbitrary (an epsilon equal to a
+  sampled distance, a sample drawn with replacement from fewer pairs than it
+  asked for) or wrong (FAN rows, `per_block` weights); see the first section.
+- With PyTorch installed and a GPU visible, `batch_rqa` and `metrics()` use
+  it (`engine="auto"`) and say so once; `engine="numpy"` keeps the CPU.
+- Batches on the CPU now take every physical core (`n_jobs=None`); pass
+  `n_jobs=1`, or `rc.set_config(n_jobs=...)`, to use fewer.
+- Pin this release with
+  `pip install "recurra @ git+https://github.com/IgnacioRodro/recurra.git@v0.26.0"`;
+  for the GPU, install PyTorch first (`docs/INSTALL.md`, section 10).
 
 **Changes that alter results**
 
@@ -99,7 +64,64 @@ comparing with. Changes that alter results are listed first.
   `read_npy` keeps its channels-first reading of short wide files but
   announces it (`CaveatWarning`) and records it.
 
-**Faster, same results**
+**New: the GPU engine** (DD-125, replacing the plan of DD-16)
+
+- `batch_rqa(windows, ...)`: the RQA of many windows in one call, one row per
+  window, each equal to the single-plot path with the same integer seed.
+  Windows of one length share their sampled pairs, so splitting a batch
+  between calls or devices changes nothing.
+- `engine="auto"` (the default of `batch_rqa` and of `metrics()`) runs on the
+  first CUDA device when PyTorch sees one and the windows have at least 128
+  points (the GPU was measured faster at every size from there up), and on
+  the CPU otherwise; with a device present the choice is announced once and
+  always recorded in the provenance. `engine="torch"` insists on the device
+  and fails rather than fall back; `engine="numpy"` is the reference.
+- The same answer by construction: thresholds bit for bit (the device sorts,
+  numpy does the deciding arithmetic), histograms count for count (integer
+  counts only, no matrix products, TF32 off and recorded), whatever the batch
+  size, band height or device.
+- Precisions `mixed` (the default on the device: float32, with every cell near
+  epsilon recomputed in float64, so the numbers of `double`, faster),
+  `double` and `single`. The band of cells recomputed widens with how far a
+  window's points reach from its centre, so the equality holds for any data.
+- New `gpu` extra (PyTorch), `Config.gpu_memory_budget_gb` (8 GB by default;
+  batches and bands are sized from it), and `recurra doctor` reports the CUDA
+  devices, the choice of `auto` and the physical cores. Installation and GPU
+  tests: `docs/INSTALL.md`, sections 10 and 11.
+- Scope: recurrence plots with a scalar threshold and the euclidean,
+  Chebyshev or Manhattan metric. Cross and joint plots, FAN and per-block
+  thresholds and the cosine metric stay on the CPU (in `metrics()` those
+  windows simply take the CPU path).
+- Validated on two RTX 3090 (PyTorch 2.14.1, CUDA 13.0): the `cuda` tests
+  (equality with the CPU in double and mixed, determinism with PyTorch's
+  deterministic mode, batch sizes 1 and N, both cards equal) pass.
+
+**Faster on the GPU, same numbers** (DD-127)
+
+- The device finds the lines using the symmetry of its plots (cell `(i, j)`
+  and cell `(j, i)` are decided by the same operations, so the plots are
+  symmetric to the last bit): the vertical and white vertical lines along the
+  rows, in one search and without copies, the diagonals in the upper half
+  only.
+- On CUDA, the float32 decisions of `mixed` and `single` run as one kernel
+  compiled with `torch.compile` (the first call compiles it, in seconds to a
+  minute, and it is cached on disk). If that fails the engine says so once and
+  decides without it; `Config.gpu_compile=False` skips it. The provenance
+  records `fused_decisions`.
+- An RTX 3090 computed 1.3 times more windows per second at 1280 points and
+  2.0 times more at 10 240 (mixed) than with the first version of the engine;
+  double, which is not fused, 1.2 to 1.4 times more.
+
+**Changed: batches use every physical core by default** (DD-126)
+
+- With `n_jobs=None` (now the default of `Config.n_jobs`), `batch_rqa` on the
+  CPU, `batch_windowed_recurrence` and the batch `metrics()` with RQA,
+  dynamics or invariants start one worker process per physical core when the
+  batch is large enough to gain from it, and say so once. Inside a worker
+  process the default is one core, so nested batches do not multiply.
+  `n_jobs=1` keeps one core. The numbers do not change.
+
+**Faster on the CPU, same results**
 
 - **Worker processes by default** (DD-82 revised). `backend="auto"` meant
   threads; on a 20-core server threads gave at most 4.2 times one core with 8
@@ -127,8 +149,14 @@ comparing with. Changes that alter results are listed first.
 
 - `tools/benchmark_engine.py`: windows per second for a range of window sizes,
   core counts, engines, devices and precisions, appended to a CSV file as
-  each is measured, with the machine and the versions. The numbers in DD-124
-  come from it (`docs/data/benchmarks/`).
+  each is measured, with the machine and the versions; `--profile` times each
+  stage on the GPU and `--fusion both` measures with and without the fused
+  decisions. The numbers in DD-124, DD-125 and DD-127 come from it
+  (`docs/data/benchmarks/`).
+- Tests marked `cuda` run only where PyTorch sees a GPU; the `torch-cpu` CI
+  job runs the rest of the engine suite, slow battery included, on every
+  push. The test suite pins `n_jobs=1`, since `pytest -n auto` already puts a
+  test on every core.
 - New tests against external references: thresholds against `scipy`'s
   `cdist`, band histograms against two independent implementations, band
   clearing against the integer mask it replaced.

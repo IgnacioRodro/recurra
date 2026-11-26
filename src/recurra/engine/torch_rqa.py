@@ -477,6 +477,53 @@ def _shear_upper(R, j0: int):
     return torch.as_strided(P, size=(B, h, w), stride=(h * L, L + 1, 1))
 
 
+#: States of a cell in the row search: recurrent, not recurrent, inside the
+#: Theiler band, and the padding past either end of a row.
+_WHITE, _BLACK, _BAND, _EDGE = 0, 1, 2, 3
+
+
+def _row_runs(R, i0: int, theiler: int):
+    """The vertical and the white vertical lines of a band, in one search.
+
+    Each cell of each row gets one of three states -- recurrent, not
+    recurrent, in the Theiler band -- and each row is padded with a fourth
+    state at both ends, so every row starts and ends with a change. One
+    search for the changes then gives every run of every state: consecutive
+    changes in the same row bound one run, whose state is that of its first
+    cell. Runs of recurrent cells are the vertical lines (column ``j`` is row
+    ``j``, DD-127); runs of non-recurrent cells are white vertical lines unless
+    the cell before or after them lies in the Theiler band [DD-57].
+
+    Returns ``(lengths, window)`` for the vertical lines and for the white
+    ones.
+    """
+    torch = _torch()
+    B, h, m = R.shape
+    width = m + 2
+    P = torch.full((B, h, width), _EDGE, dtype=torch.int8, device=R.device)
+    P[:, :, 1:-1] = R
+    if theiler > 0:
+        rows = torch.arange(i0, i0 + h, device=R.device).reshape(h, 1)
+        cols = torch.arange(m, device=R.device).reshape(1, m)
+        P[:, :, 1:-1] += (_BAND * ((rows - cols).abs() < theiler)).to(torch.int8)
+    flat = P.reshape(B * h, width)
+    changes = torch.nonzero(torch.diff(flat, dim=1).reshape(-1)).reshape(-1)
+    line = torch.div(changes, width - 1, rounding_mode="floor")
+    pos = changes - line * (width - 1)
+    run = line[:-1] == line[1:]                    # not the step between two rows
+    line, start, end = line[:-1][run], pos[:-1][run], pos[1:][run]
+    cells = P.reshape(-1)
+    base = line * width
+    state = cells[base + start + 1]
+    window = torch.div(line, h, rounding_mode="floor")
+    black = state == _BLACK
+    white = state == _WHITE
+    if theiler > 0:
+        white &= (cells[base + start] != _BAND) & (cells[base + end + 1] != _BAND)
+    length = end - start
+    return (length[black], window[black]), (length[white], window[white])
+
+
 def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
                           device: str, band_rows: int, stages: _Stages | None = None):
     """Line histograms of one batch of recurrence plots on the device.
@@ -578,10 +625,12 @@ def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
         stages.mark("decide")
         recurrent += R.reshape(B, -1).sum(dim=1)
 
-        # vertical lines: column j is row j, so they are the runs of the rows
-        line, start, end = _runs_by_row(R.reshape(B * h, m))
-        _count(vert, end - start, torch.div(line, h, rounding_mode="floor"), size1)
-        stages.mark("vertical")
+        # vertical and white vertical lines: column j is row j, so they are
+        # the runs along the rows, all found in one search
+        (v_len, v_of), (w_len, w_of) = _row_runs(R, i0, theiler)
+        _count(vert, v_len, v_of, size1)
+        _count(white, w_len, w_of, size1)
+        stages.mark("vertical_and_white")
 
         # diagonals k >= kmin from the upper half, carried between bands; the
         # main diagonal on its own when the Theiler window is 0
@@ -598,26 +647,7 @@ def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
             _carry_runs(M, window_ids, window_ids, main_open, diag_main, size1)
         stages.mark("diagonal")
 
-        # white vertical lines, the runs of non-recurrent cells along the rows;
-        # one that touches the Theiler band is not a white line [DD-57]
-        W = ~R
-        if banded:
-            rows = torch.arange(i0, i1, device=dev).reshape(h, 1)
-            cols = torch.arange(m, device=dev).reshape(1, m)
-            W &= (rows - cols).abs() >= theiler
-        line, start, end = _runs_by_row(W.reshape(B * h, m))
-        length = end - start
-        of = torch.div(line, h, rounding_mode="floor")
-        if banded:
-            i = i0 + (line - of * h)
-            before = start - 1
-            touches = (((before >= 0) & ((i - before).abs() < theiler))
-                       | ((end < m) & ((i - end).abs() < theiler)))
-            keep = ~touches
-            length, of = length[keep], of[keep]
-        _count(white, length, of, size1)
-        del R, W
-        stages.mark("white_vertical")
+        del R
 
     # flush: diagonal runs reaching the end of the plot are kept [DD-57]
     open_d = diag_open > 0

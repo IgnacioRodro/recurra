@@ -354,7 +354,7 @@ value with the region and any warning; `float(invariant)` gives the number.
 
 ## 5. Test suite
 
-**561 test functions, all green** (more cases once parametrised).
+**562 test functions, all green** (more cases once parametrised).
 
 | File | Covers |
 |---|---|

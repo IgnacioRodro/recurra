@@ -31,7 +31,7 @@ GitHub, pinned to its tag (this is the form to put in an analysis project's
 requirements, so that the analysis can be reproduced later):
 
 ```bash
-pip install "recurra[viz] @ git+https://github.com/IgnacioRodro/recurra.git@v0.25.0"
+pip install "recurra[viz] @ git+https://github.com/IgnacioRodro/recurra.git@v0.26.0"
 ```
 
 To work with the source, get it from GitHub (`git clone`, or **Code →
@@ -145,7 +145,7 @@ print(rc.doctor())
 Expected (the first line shows the version you installed):
 
 ```
-recurra 0.25.0
+recurra 0.26.0
   OK  numpy
   OK  scipy
   OK  pandas

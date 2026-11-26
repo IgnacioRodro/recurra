@@ -363,3 +363,18 @@ def test_the_version_is_not_stale():
     assert dated and dated.group(1) == released.group(2), (
         f"CITATION.cff dates the release {dated.group(1) if dated else None}; "
         f"the changelog says {released.group(2)}")
+
+
+def test_install_lines_pin_the_latest_release():
+    """README and INSTALL tell people which tag to install. In 0.25 they named
+    the previous one for a while, with nothing to notice."""
+    text = _read(ROOT / "CHANGELOG.md")
+    released = re.search(r"^## \[(\d+\.\d+\.\d+)\] — \d{4}-\d{2}-\d{2}\s*$", text, re.M)
+    assert released, "the changelog has no dated release heading"
+    latest = released.group(1)
+    for path in (README, ROOT / "docs" / "INSTALL.md"):
+        pins = set(re.findall(r"recurra\.git@v(\d+\.\d+\.\d+)", _read(path)))
+        assert pins <= {latest}, (
+            f"{path.name} pins v{sorted(pins)}, the latest release is v{latest}")
+    status = re.search(r"latest release (\d+\.\d+\.\d+)", _read(README))
+    assert status and status.group(1) == latest, "README status line is stale"
