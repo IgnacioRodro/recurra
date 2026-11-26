@@ -6,6 +6,7 @@
     python tools/benchmark_engine.py --engines numpy torch --devices cuda:0
     python tools/benchmark_engine.py --quick                 # a smoke run, seconds
     python tools/benchmark_engine.py --engines torch --profile   # where the GPU time goes
+    python tools/benchmark_engine.py --engines torch --fusion both   # fused decisions or not
 
 Every number in the decision records about speed comes from this script, so it
 measures what an analysis does: many windows of a three-dimensional
@@ -28,6 +29,10 @@ The trajectories are synthetic, with fixed seeds. Each result is appended to
 the CSV file as soon as it is measured (with the versions and the machine),
 and the printed lines go to a ``.txt`` file next to it, so an interrupted run
 keeps what it measured.
+
+``--fusion both`` measures the torch engine with its float32 decisions fused
+into one compiled kernel (the default on CUDA, DD-127) and without, to show
+what the fusion is worth on the card; ``off`` measures without only.
 
 ``--profile`` also times each stage of the torch engine (thresholds, the
 decisions, each kind of line, copying back), waiting for the device at every
@@ -55,7 +60,8 @@ import recurra as rc
 
 FIELDS = ["recurra", "engine", "device", "precision", "measurement", "n_points",
           "dim", "windows", "n_jobs", "seconds", "windows_per_s", "threshold_s",
-          "plot_and_histogram_s", "peak_device_memory_gb", "batch_size", "stages", "python",
+          "plot_and_histogram_s", "peak_device_memory_gb", "batch_size", "fused", "stages",
+          "python",
           "numpy", "torch", "cpu_count",
           "physical_cores", "blas_threads", "platform"]
 
@@ -119,6 +125,8 @@ def main(argv=None) -> int:
     p.add_argument("--no-windowed", action="store_true",
                    help="skip the batch_windowed_recurrence measurement")
     p.add_argument("--out", default="benchmark_engine.csv", help="CSV file to write")
+    p.add_argument("--fusion", choices=["on", "off", "both"], default="on",
+                   help="torch engine: fused float32 decisions (default on), off, or both")
     p.add_argument("--profile", action="store_true",
                    help="time each stage of the torch engine (a little slower)")
     p.add_argument("--quick", action="store_true",
@@ -195,32 +203,44 @@ def main(argv=None) -> int:
                 say(f"N={n:6d}  batch_rqa numpy, n_jobs={k:3d}: {count} windows in "
                     f"{s:8.2f} s, {count / s:9.2f} windows/s")
         if "torch" in a.engines:
+            fusions = {"on": [True], "off": [False], "both": [True, False]}[a.fusion]
             for dev in a.devices:
                 for prec in a.precisions:
-                    count = a.windows or (8 if a.quick else 200)
-                    X = windows_of(n, count)
-                    rc.batch_rqa(X[:2], rng=0, engine="torch", device=dev,
-                                 precision=prec)                      # warm up
-                    t0 = time.perf_counter()
-                    table = rc.batch_rqa(X, rng=0, engine="torch", device=dev,
-                                         precision=prec)
-                    s = time.perf_counter() - t0
-                    prov = table.attrs["provenance"]
-                    peak = prov.get("peak_device_memory_gb")
-                    batch = prov.get("batch_size", {}).get(n)
-                    st = prov.get("stage_seconds")
-                    record(engine="torch", device=dev, precision=prec,
-                           measurement="batch_rqa", n_points=n, windows=count, n_jobs=1,
-                           seconds=s, windows_per_s=count / s,
-                           peak_device_memory_gb=peak, batch_size=batch,
-                           stages=";".join(f"{k}={v}" for k, v in st.items()) if st else "")
-                    say(f"N={n:6d}  batch_rqa torch on {dev}, {prec}: {count} windows in "
-                        f"{s:8.2f} s, {count / s:9.2f} windows/s "
-                        f"(batches of {batch}, peak {peak} GB)")
-                    if st:
-                        total = sum(st.values()) or 1.0
-                        say("          stages: " + ", ".join(
-                            f"{k} {v:.2f} s ({100 * v / total:.0f}%)" for k, v in st.items()))
+                    # double is never fused (DD-127): one measurement is enough
+                    for fuse in (fusions if prec != "double" else fusions[:1]):
+                        rc.set_config(gpu_compile=fuse)
+                        count = a.windows or (8 if a.quick else 200)
+                        X = windows_of(n, count)
+                        rc.batch_rqa(X[:2], rng=0, engine="torch", device=dev,
+                                     precision=prec)                  # warm up, compile
+                        t0 = time.perf_counter()
+                        table = rc.batch_rqa(X, rng=0, engine="torch", device=dev,
+                                             precision=prec)
+                        s = time.perf_counter() - t0
+                        prov = table.attrs["provenance"]
+                        peak = prov.get("peak_device_memory_gb")
+                        batch = prov.get("batch_size", {}).get(n)
+                        fused = prov.get("fused_decisions")
+                        st = prov.get("stage_seconds")
+                        record(engine="torch", device=dev, precision=prec,
+                               measurement="batch_rqa", n_points=n, windows=count,
+                               n_jobs=1, seconds=s, windows_per_s=count / s,
+                               peak_device_memory_gb=peak, batch_size=batch, fused=fused,
+                               stages=";".join(f"{k}={v}" for k, v in st.items())
+                               if st else "")
+                        label = "fused" if fused else "not fused"
+                        say(f"N={n:6d}  batch_rqa torch on {dev}, {prec}, {label}: {count} "
+                            f"windows in {s:8.2f} s, {count / s:9.2f} windows/s "
+                            f"(batches of {batch}, peak {peak} GB)")
+                        if fuse and not fused and prov.get("fused_decisions_failed"):
+                            say("          fusion failed: "
+                                + "; ".join(prov["fused_decisions_failed"]))
+                        if st:
+                            total = sum(st.values()) or 1.0
+                            say("          stages: " + ", ".join(
+                                f"{k} {v:.2f} s ({100 * v / total:.0f}%)"
+                                for k, v in st.items()))
+                    rc.set_config(gpu_compile=True)
         if "numpy" in a.engines and not a.no_windowed:
             for k in jobs:
                 records = max(k, 2)

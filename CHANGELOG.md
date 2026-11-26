@@ -39,6 +39,19 @@ comparing with. Changes that alter results are listed first.
   how far a window's points reach from its centre, so the equality holds for
   any data, not only clouds a few epsilons wide.
 
+**Faster on the GPU, same numbers** (DD-127)
+
+- The device finds the lines using the symmetry of the plot: the vertical and
+  white vertical lines along the rows, inside one band and without copies,
+  the diagonals in the upper half only. On the CPU build of PyTorch the line
+  search became 2.4 times faster; the gain on CUDA is to be measured.
+- On CUDA, the float32 decisions of `mixed` and `single` run as one kernel
+  compiled with `torch.compile` (the first call compiles it; cached on disk).
+  If that fails the engine says so once and decides without it.
+  `Config.gpu_compile` switches it off. The provenance records
+  `fused_decisions`.
+- `tools/benchmark_engine.py --fusion both` measures with and without it.
+
 **Changed: batches use every physical core by default** (DD-126)
 
 - With `n_jobs=None` (now the default of `Config.n_jobs`), `batch_rqa` on the

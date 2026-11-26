@@ -134,6 +134,7 @@ Status: `accepted` · `provisional` · `revised` · `rejected`
 | [DD-124](#dd-124) | **Line histograms by whole-array operations over full-width bands** | accepted | F17 |
 | [DD-125](#dd-125) | **Two engines, one answer: the torch engine and `engine="auto"`** | accepted, validated on CUDA | F17 |
 | [DD-126](#dd-126) | **By default a batch uses every physical core** | accepted | F17 |
+| [DD-127](#dd-127) | **The device searches lines using the symmetry of the plot, and fuses its float32 decisions** | accepted (CUDA measurement pending) | F17 |
 
 ---
 
@@ -5214,3 +5215,75 @@ stream fixed by position [DD-81], and `tests/test_parallel.py` checks that
 the default and one core give identical tables. The test suite pins
 `n_jobs=1` in `tests/conftest.py`, because `pytest -n auto` already puts a
 test on every core.
+
+---
+
+<a id="dd-127"></a>
+## DD-127 · The device searches lines using the symmetry of the plot, and fuses its float32 decisions
+
+**Status:** accepted (0.26.0); the speed on CUDA is to be measured. Revises
+the line search of [DD-125]; changes no result.
+
+**Context.** Profiled on an RTX 3090 (mixed precision, windows of 10 240
+points, [DD-125]): 32 % of the time deciding the cells and 20 to 23 % for
+each of the three kinds of line. The line search copied each band twice or
+three times -- a transposed copy for the verticals, another for the white
+verticals, a padded shear and its transposition for the diagonals -- and
+carried open runs from band to band for all three. The decisions made a
+separate pass over the band for every difference, square and sum.
+
+**Decision.**
+
+1. **Lines from the symmetry of the plot.** On the device, cell `(i, j)` and
+   cell `(j, i)` are decided from the same coordinates by the same operations:
+   a difference changes sign exactly, its square or absolute value does not,
+   the coordinates are added in the same order, and the Theiler band is
+   symmetric. Every plot the engine builds is therefore symmetric to the last
+   bit, in every precision, fused or not. So:
+   - column `j` is row `j`: the vertical and the white vertical lines are the
+     runs along the rows, each of which lies whole inside one band, with no
+     transposed copy and nothing carried between bands. A white run is
+     dropped when the cell before or after it lies in the Theiler band, the
+     rule of [DD-57] read along the row;
+   - the diagonal at `+k` is the diagonal at `-k`: only the diagonals
+     `k >= max(1, w)` are searched (one padded copy of the right part of each
+     band) and their counts doubled; the main diagonal, when `w = 0`, is
+     searched once.
+2. **One search per run.** Each row is padded with a false cell at both ends,
+   so its changes alternate start, end, start, end; one search for the
+   changes replaces the two searches for starts and for ends.
+3. **Fused float32 decisions.** For `mixed` and `single`, on a CUDA device,
+   the distance, the decision and the cells near epsilon are computed by one
+   function compiled with `torch.compile`, without the intermediate arrays.
+   The fused kernel may contract a multiplication and an addition into one
+   rounding (FMA), so its float32 values can differ from the unfused ones in
+   the last bit; that is far inside the band of [DD-125] around epsilon,
+   whose cells `mixed` recomputes in float64 unfused, so mixed decisions do
+   not change. `double` is not fused: its decisions stay those of the
+   reference by construction. If compilation fails the engine says so once,
+   records why in the provenance (`fused_decisions`,
+   `fused_decisions_failed`) and decides unfused; `Config.gpu_compile=False`
+   skips the attempt. On the CPU the torch engine does not fuse: there the
+   compiled C++ was slower than PyTorch's own vectorised operations.
+
+**Alternatives rejected.** *Hand-written CUDA kernels*: a build step and a
+compiler for every user, for a gain the compiled function should mostly give.
+*Fusing in double*: FMA would move the double decisions off the reference's
+in the last bit. *Run lengths by cumulative scans instead of searches*: full
+passes over the band where the searches touch only the changes.
+
+**Verified** (PyTorch on the CPU): against the reference engine, histograms
+equal for Theiler windows 0, 1, 2, 5 and 30 (wider than a band), the three
+metrics, the three precisions, whole plots and bands of 7 rows; the fused
+path compiled on the CPU equal to the reference for Theiler 0, 1 and 5,
+including two clouds 4000 apart. On the CPU the three line searches took
+0.16 s instead of 0.38 s for four windows of 2000 points (2.4 times faster).
+Tests: `tests/test_engine.py`; the `cuda` test
+`test_cuda_fused_and_plain_decisions_agree` checks on the GPU that the
+fusion ran and changed nothing.
+
+**Consequences.** No result changes. The first call on a CUDA device per
+metric and dimension compiles the kernel (seconds to a minute; cached on
+disk). The CPU engine of [DD-124] keeps its column search: its plots come
+from the norm expansion of [DD-33], which is not guaranteed symmetric to the
+last bit, so the same change there would need its own decision.

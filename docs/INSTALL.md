@@ -406,6 +406,14 @@ smaller `n_jobs` or set it once with `rc.set_config(n_jobs=8)`.
 (8 GB by default) or to `device_memory_gb=` in the call, and refuses with the
 numbers rather than run out of memory.
 
+**The first call is slower.** On a CUDA device the engine compiles its
+float32 decisions into one GPU kernel with `torch.compile` [DD-127], which
+takes from a few seconds to a minute the first time a metric and dimension are
+used, and is cached on disk afterwards. The Linux builds of PyTorch include
+the compiler it needs (Triton). Where it is missing or fails, the engine says
+so once and decides without the fused kernel: slower, with the same numbers.
+`rc.set_config(gpu_compile=False)` skips the attempt.
+
 ## 11. Running the GPU tests
 
 The tests marked `cuda` need a CUDA device and are skipped everywhere else,
@@ -434,4 +442,6 @@ CPU cores, which is what `engine="auto"` uses (`AUTO_MIN_POINTS`). With
 `--profile`, each GPU line is followed by the seconds spent in each stage
 (thresholds, decisions, each kind of line, copying back), which shows what is
 worth optimising; it waits for the device at every stage, so it runs a little
-slower than without it.
+slower than without it. With `--fusion both`, each GPU measurement is made
+with the fused decisions and without them, to show what the fusion is worth on
+the card.

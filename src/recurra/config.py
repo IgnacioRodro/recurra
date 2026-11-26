@@ -54,6 +54,9 @@ class Config:
     #: Device memory the torch engine may use per call, in GB [DD-125, P7].
     #: A third of a 24 GB card, leaving room for other work on it.
     gpu_memory_budget_gb: float = 8.0
+    #: Fuse the float32 decisions of the torch engine into one kernel with
+    #: torch.compile on CUDA devices; False skips the attempt [DD-127].
+    gpu_compile: bool = True
     #: Default dtype for state-space coordinates and distances.
     float_dtype: str = "float64"
     #: Emit warnings when a stage makes a consequential silent choice.

@@ -4,7 +4,9 @@ Design note (DD-125) -- the same answer as the reference, by construction.
 
 The torch engine runs the band algorithm of DD-124 on a batch of windows of
 equal length at once: a band of every window of the batch is decided,
-differenced and counted in one set of array operations. Three rules make its
+differenced and counted in one set of array operations, the lines found
+through the symmetry of the plot and the float32 decisions fused on CUDA
+(DD-127). Three rules make its
 answer the reference's answer rather than an approximation of it:
 
 * **Thresholds.** The pairs are the ones ``sample_pair_indices`` draws, with
@@ -317,16 +319,115 @@ def _decide(A, C, eps_op, *, metric: str, i0: int, theiler: int, banded: bool):
     return R, acc
 
 
+# ------------------------------------------------------- fused decisions
+#: Tests set this to try the fused decisions on the CPU, where torch.compile
+#: generates C++ instead of GPU kernels; normal runs fuse only on CUDA.
+_FUSE_ON_CPU = False
+_DECIDERS: dict = {}
+_FUSE_WARNED: set = set()
+
+
+def _fused_kernel(metric: str, dim: int):
+    """The float32 pass as one function for torch.compile: distance, decision
+    and the cells near epsilon, without the intermediate arrays [DD-127]."""
+    torch = _torch()
+
+    def decide(A, C, eps, rtol, i0: int, theiler: int):
+        acc = None
+        for k in range(dim):
+            diff = A[:, :, None, k] - C[:, None, :, k]
+            term = diff * diff if metric == "euclidean" else torch.abs(diff)
+            if acc is None:
+                acc = term
+            elif metric == "chebyshev":
+                acc = torch.maximum(acc, term)
+            else:
+                acc = acc + term
+        R = acc <= eps
+        amb = (acc - eps).abs() <= rtol * eps
+        if theiler > 0:
+            h, m = A.shape[1], C.shape[1]
+            rows = torch.arange(h, device=A.device).reshape(h, 1) + i0
+            cols = torch.arange(m, device=A.device).reshape(1, m)
+            keep = (rows - cols).abs() >= theiler
+            R = R & keep
+            amb = amb & keep
+        return R, amb
+
+    return decide
+
+
+class _FusedDecider:
+    """The float32 decisions of one metric and dimension, compiled once.
+
+    If compiling or running the compiled function fails (no Triton for this
+    card or platform, an old driver), it says so once and decides as before,
+    with the same numbers: fusing changes the speed, never a decision outside
+    the band of cells that are recomputed in float64 anyway.
+    """
+
+    def __init__(self, metric: str, dim: int):
+        self.metric = metric
+        self.plain = _fused_kernel(metric, dim)
+        self.ok = True
+        self.reason = ""
+        try:
+            self.compiled = _torch().compile(self.plain, dynamic=True, fullgraph=True)
+        except Exception as exc:                      # pragma: no cover - platform
+            self._fail(exc)
+
+    def _fail(self, exc) -> None:
+        import warnings
+
+        from ..exceptions import CaveatWarning
+
+        self.ok = False
+        self.reason = f"{type(exc).__name__}: {str(exc).splitlines()[0][:200]}"
+        if self.reason not in _FUSE_WARNED:
+            _FUSE_WARNED.add(self.reason)
+            warnings.warn(
+                "torch engine: the fused float32 decisions could not be compiled "
+                f"({self.reason}); deciding without fusion, which is slower and gives "
+                "the same numbers. Set recurra.set_config(gpu_compile=False) to skip "
+                "the attempt [DD-127].", CaveatWarning, stacklevel=4)
+
+    def decide(self, A, C, eps, rtol, *, i0: int, theiler: int):
+        if self.ok:
+            try:
+                return self.compiled(A, C, eps, rtol, i0, theiler)
+            except Exception as exc:                  # pragma: no cover - platform
+                self._fail(exc)
+        return self.plain(A, C, eps, rtol, i0, theiler)
+
+
+def _fused_decider(metric: str, dim: int, dev):
+    """The compiled float32 decider for this job, or None to decide unfused."""
+    from ..config import get_config
+
+    if not getattr(get_config(), "gpu_compile", True):
+        return None
+    if dev.type != "cuda" and not _FUSE_ON_CPU:
+        return None
+    key = (metric, dim)
+    if key not in _DECIDERS:
+        _DECIDERS[key] = _FusedDecider(metric, dim)
+    return _DECIDERS[key]
+
+
 # ---------------------------------------------------------------- run lengths
 def _runs_by_row(X):
-    """Every run of True along the rows of a 2-D boolean tensor."""
+    """Every run of True along the rows of a 2-D boolean tensor.
+
+    Each row is padded with False at both ends, so its changes alternate
+    start, end, start, end; one search for the changes finds both.
+    """
     torch = _torch()
     n_lines, h = X.shape
     P = torch.zeros((n_lines, h + 2), dtype=torch.int8, device=X.device)
     P[:, 1:-1] = X
-    d = torch.diff(P, dim=1).reshape(-1)
-    s = torch.nonzero(d == 1).reshape(-1)
-    e = torch.nonzero(d == -1).reshape(-1)
+    changes = torch.nonzero(torch.diff(P, dim=1).reshape(-1)).reshape(-1)
+    s = changes[0::2]
+    e = changes[1::2]
     row = torch.div(s, h + 1, rounding_mode="floor")
     return row, s - row * (h + 1), e - row * (h + 1)
 
@@ -359,15 +460,21 @@ def _carry_runs(X, keys, line_batch, open_len, counts, size1: int) -> None:
     open_len[keys] = still
 
 
-def _shear(R):
-    """(B, h, m) -> (B, h, m + h - 1): diagonal k of the band becomes column
-    ``k + h - 1 - i0``, through a strided view of a padded copy."""
+def _shear_upper(R, j0: int):
+    """The diagonals of a band that start in its first row at column ``j0`` or
+    to its right, as columns: (B, h, m) -> (B, h, m - j0).
+
+    Column ``c`` holds the cells ``(r, j0 + r + c)`` for ``r = 0 .. h-1``, and
+    False past the right edge of the plot; it is a strided view of one padded
+    copy of the right part of the band.
+    """
     torch = _torch()
     B, h, m = R.shape
-    L = m + 2 * (h - 1)
+    w = m - j0
+    L = w + h - 1
     P = torch.zeros((B, h, L), dtype=R.dtype, device=R.device)
-    P[:, :, h - 1:h - 1 + m] = R
-    return torch.as_strided(P, size=(B, h, m + h - 1), stride=(h * L, L + 1, 1))
+    P[:, :, :w] = R[:, :, j0:]
+    return torch.as_strided(P, size=(B, h, w), stride=(h * L, L + 1, 1))
 
 
 def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
@@ -377,6 +484,21 @@ def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
     ``Xw`` is (B, N, d), float64, already centred as the reference centres it;
     ``eps`` the B thresholds. Returns the counts as numpy arrays and the
     diagnostics (cells near epsilon, cells recomputed).
+
+    Design note (DD-127) -- the lines are found using the symmetry of the plot.
+
+    Cell ``(i, j)`` and cell ``(j, i)`` are decided from the same numbers by
+    the same operations (a difference changes sign exactly, its square or
+    absolute value does not, and the coordinates are added in the same order),
+    so every plot here is symmetric to the last bit, and so is the Theiler
+    band. Two consequences remove most of the copying the line search did:
+
+    * column ``j`` is row ``j``, so the vertical lines and the white vertical
+      lines are the runs along the *rows*, each of which lies whole inside one
+      band: no transposed copy and nothing carried from band to band;
+    * the diagonal at offset ``+k`` is the one at ``-k``, so only the upper
+      half is searched and its counts are doubled; the main diagonal, when the
+      Theiler window is 0, is searched once.
     """
     torch = prepare_torch()
     if metric not in METRICS:
@@ -399,41 +521,40 @@ def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
     rtol32 = torch.as_tensor(_single_rtol(np.asarray(Xw, dtype=float), eps),
                              dtype=torch.float32, device=dev).reshape(B, 1, 1)
     banded = theiler > 0
+    fused = _fused_decider(metric, d, dev) if precision != "double" else None
     stages.mark("centre_and_copy_to_device")
 
-    diag = torch.zeros(B * size1, dtype=torch.int64, device=dev)
+    diag_upper = torch.zeros(B * size1, dtype=torch.int64, device=dev)
+    diag_main = torch.zeros(B * size1, dtype=torch.int64, device=dev)
     vert = torch.zeros(B * size1, dtype=torch.int64, device=dev)
     white = torch.zeros(B * size1, dtype=torch.int64, device=dev)
-    n_keys = n + m + 1
-    diag_open = torch.zeros(B * n_keys, dtype=torch.int64, device=dev)
-    vert_open = torch.zeros(B * m, dtype=torch.int64, device=dev)
-    white_open = torch.zeros(B * m, dtype=torch.int64, device=dev)
-    white_flag = torch.zeros(B * m, dtype=torch.bool, device=dev)
-    col_keys = torch.arange(B * m, dtype=torch.int64, device=dev)
-    col_batch = torch.div(col_keys, m, rounding_mode="floor")
-    col_index = col_keys - col_batch * m
+    diag_open = torch.zeros(B * n, dtype=torch.int64, device=dev)
+    main_open = torch.zeros(B, dtype=torch.int64, device=dev)
+    window_ids = torch.arange(B, dtype=torch.int64, device=dev)
     recurrent = torch.zeros(B, dtype=torch.int64, device=dev)
+    kmin = max(1, theiler)                # first diagonal of the upper half
     near = 0
     rechecked = 0
-
-    def excluded(rows, cols):
-        if not banded:
-            return torch.zeros(rows.shape, dtype=torch.bool, device=dev)
-        return (rows >= 0) & (rows < n) & ((rows - cols).abs() < theiler)
 
     for i0 in range(0, n, band_rows):
         i1 = min(i0 + band_rows, n)
         h = i1 - i0
-        R, acc = _decide(Xc[:, i0:i1, :], Xc, eps_c, metric=metric, i0=i0,
-                         theiler=theiler, banded=banded)
+        if fused is not None:
+            R, amb = fused.decide(Xc[:, i0:i1, :], Xc, eps_c, rtol32, i0=i0,
+                                  theiler=theiler)
+            acc = None
+        else:
+            R, acc = _decide(Xc[:, i0:i1, :], Xc, eps_c, metric=metric, i0=i0,
+                             theiler=theiler, banded=banded)
         if precision == "double":
             near += int(((acc - eps64).abs() <= NEAR_RTOL * eps64).sum())
         else:
-            amb = (acc - eps_c).abs() <= rtol32 * eps_c
-            if banded:
-                rows = torch.arange(i0, i1, device=dev).reshape(h, 1)
-                cols = torch.arange(m, device=dev).reshape(1, m)
-                amb &= (rows - cols).abs() >= theiler
+            if acc is not None:
+                amb = (acc - eps_c).abs() <= rtol32 * eps_c
+                if banded:
+                    rows = torch.arange(i0, i1, device=dev).reshape(h, 1)
+                    cols = torch.arange(m, device=dev).reshape(1, m)
+                    amb &= (rows - cols).abs() >= theiler
             n_amb = int(amb.sum())
             near += n_amb
             if precision == "mixed" and n_amb:
@@ -452,67 +573,60 @@ def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
                         acc64 = acc64 + term
                 R[b_i, r_i, c_i] = acc64 <= eps64.reshape(B)[b_i]
                 rechecked += n_amb
+            del amb
         del acc
         stages.mark("decide")
         recurrent += R.reshape(B, -1).sum(dim=1)
 
-        # verticals: each column of each window is a line
-        RT = R.transpose(1, 2).reshape(B * m, h)
-        _carry_runs(RT, col_keys, col_batch, vert_open, vert, size1)
+        # vertical lines: column j is row j, so they are the runs of the rows
+        line, start, end = _runs_by_row(R.reshape(B * h, m))
+        _count(vert, end - start, torch.div(line, h, rounding_mode="floor"), size1)
         stages.mark("vertical")
 
-        # diagonals, sheared into columns
-        S = _shear(R)
-        q = m + h - 1
-        ST = S.transpose(1, 2).reshape(B * q, h)
-        k_local = torch.arange(q, dtype=torch.int64, device=dev) - (h - 1) - i0 + n
-        b_of = torch.arange(B, dtype=torch.int64, device=dev).repeat_interleave(q)
-        keys = b_of * n_keys + k_local.repeat(B)
-        _carry_runs(ST, keys, b_of, diag_open, diag, size1)
+        # diagonals k >= kmin from the upper half, carried between bands; the
+        # main diagonal on its own when the Theiler window is 0
+        j0 = i0 + kmin
+        if j0 < m:
+            w = m - j0
+            ST = _shear_upper(R, j0).transpose(1, 2).reshape(B * w, h)
+            b_of = window_ids.repeat_interleave(w)
+            keys = b_of * n + (kmin + torch.arange(w, dtype=torch.int64,
+                                                   device=dev)).repeat(B)
+            _carry_runs(ST, keys, b_of, diag_open, diag_upper, size1)
+        if theiler == 0:
+            M = torch.diagonal(R, offset=i0, dim1=1, dim2=2).contiguous()
+            _carry_runs(M, window_ids, window_ids, main_open, diag_main, size1)
         stages.mark("diagonal")
 
-        # white verticals, the Theiler band as a third state [DD-57]
+        # white vertical lines, the runs of non-recurrent cells along the rows;
+        # one that touches the Theiler band is not a white line [DD-57]
         W = ~R
         if banded:
             rows = torch.arange(i0, i1, device=dev).reshape(h, 1)
             cols = torch.arange(m, device=dev).reshape(1, m)
             W &= (rows - cols).abs() >= theiler
-        WT = W.transpose(1, 2).reshape(B * m, h)
-        line, start, end = _runs_by_row(WT)
+        line, start, end = _runs_by_row(W.reshape(B * h, m))
         length = end - start
-        carried = white_open[line]
-        top = start == 0
-        joined = top & (carried > 0)
-        length[joined] += carried[joined]
-        c_of = col_index[line]
-        flag = torch.where(joined, white_flag[line], excluded(i0 + start - 1, c_of))
-        bottom = end == h
-        flag_end = flag | excluded(i0 + end, c_of)
-        keep = ~bottom & ~flag_end
-        _count(white, length[keep], col_batch[line[keep]], size1)
-        continued = torch.zeros(B * m, dtype=torch.bool, device=dev)
-        continued[line[joined]] = True
-        stopped = (white_open > 0) & ~continued
-        if bool(stopped.any()):
-            bad = white_flag[stopped] | excluded(
-                torch.full((int(stopped.sum()),), i0, dtype=torch.int64, device=dev),
-                col_index[stopped])
-            _count(white, white_open[stopped][~bad], col_batch[stopped][~bad], size1)
-        white_open.zero_()
-        white_flag.zero_()
-        white_open[line[bottom]] = length[bottom]
-        white_flag[line[bottom]] = flag[bottom]
+        of = torch.div(line, h, rounding_mode="floor")
+        if banded:
+            i = i0 + (line - of * h)
+            before = start - 1
+            touches = (((before >= 0) & ((i - before).abs() < theiler))
+                       | ((end < m) & ((i - end).abs() < theiler)))
+            keep = ~touches
+            length, of = length[keep], of[keep]
+        _count(white, length, of, size1)
+        del R, W
         stages.mark("white_vertical")
 
-    # flush: runs reaching the end of the record are kept [DD-57]
+    # flush: diagonal runs reaching the end of the plot are kept [DD-57]
     open_d = diag_open > 0
-    _count(diag, diag_open[open_d],
-           torch.div(torch.arange(B * n_keys, device=dev), n_keys,
-                     rounding_mode="floor")[open_d], size1)
-    open_v = vert_open > 0
-    _count(vert, vert_open[open_v], col_batch[open_v], size1)
-    open_w = (white_open > 0) & ~white_flag
-    _count(white, white_open[open_w], col_batch[open_w], size1)
+    _count(diag_upper, diag_open[open_d],
+           torch.div(torch.arange(B * n, device=dev), n, rounding_mode="floor")[open_d],
+           size1)
+    open_m = main_open > 0
+    _count(diag_main, main_open[open_m], window_ids[open_m], size1)
+    diag = 2 * diag_upper + diag_main
 
     out = {
         "diagonal": diag.reshape(B, size1).cpu().numpy(),
@@ -521,6 +635,7 @@ def batch_line_histograms(Xw, eps, *, theiler: int, metric: str, precision: str,
         "recurrent": recurrent.cpu().numpy(),
         "near_epsilon": near,
         "rechecked": rechecked,
+        "fused_decisions": fused is not None and fused.ok,
     }
     stages.mark("flush_and_copy_back")
     return out
@@ -555,6 +670,7 @@ def run_batches(ws, seeds, *, device, precision, batch_size, device_memory_gb,
         groups.setdefault(w.shape, []).append(k)
 
     near = rechecked = 0
+    fused: list[bool] = []
     plans = {}
     rounding = 0
     stages = _Stages(dev)
@@ -601,6 +717,7 @@ def run_batches(ws, seeds, *, device, precision, batch_size, device_memory_gb,
                                         band_rows=plan.band_rows, stages=stages)
             near += out["near_epsilon"]
             rechecked += out["rechecked"]
+            fused.append(out["fused_decisions"])
             for b, k in enumerate(chunk):
                 extent = float(np.max(np.ptp(raw[b], axis=0))) if raw[b].size else 0.0
                 if epsilon is None and extent > 0 and eps[b] <= 1e-9 * extent:
@@ -639,9 +756,19 @@ def run_batches(ws, seeds, *, device, precision, batch_size, device_memory_gb,
             "peak_device_memory_gb": _peak_gb(dev),
             "cells_near_epsilon": int(near),
             "cells_rechecked_in_double": int(rechecked),
+            **_fused_provenance(fused),
             "deterministic_counts": True,
             **({"stage_seconds": {k: round(v, 4) for k, v in stages.seconds.items()}}
                if stages.on else {})}
+
+
+def _fused_provenance(fused: list[bool]) -> dict:
+    """Whether the float32 decisions ran fused, and if not why [DD-127]."""
+    reasons = sorted({d.reason for d in _DECIDERS.values() if not d.ok})
+    info = {"fused_decisions": bool(fused) and all(fused)}
+    if reasons:
+        info["fused_decisions_failed"] = reasons
+    return info
 
 
 def _peak_gb(dev) -> float | None:
@@ -672,6 +799,7 @@ def device_histograms(items, *, device, precision, device_memory_gb,
         groups.setdefault((X.shape, theiler, metric), []).append((key, X, eps))
     out = {}
     near = rechecked = 0
+    fused: list[bool] = []
     plans = {}
     for ((n, _d), theiler, metric), members in sorted(groups.items(),
                                                       key=lambda g: (g[0][0], g[0][1])):
@@ -687,6 +815,7 @@ def device_histograms(items, *, device, precision, device_memory_gb,
                 precision=precision, device=device, band_rows=plan.band_rows)
             near += res["near_epsilon"]
             rechecked += res["rechecked"]
+            fused.append(res["fused_decisions"])
             for b, (key, _, _) in enumerate(chunk):
                 out[key] = LineHistogram(
                     diagonal=res["diagonal"][b], vertical=res["vertical"][b],
@@ -702,4 +831,5 @@ def device_histograms(items, *, device, precision, device_memory_gb,
                  "device_memory_gb": device_memory_gb,
                  "peak_device_memory_gb": _peak_gb(dev),
                  "cells_near_epsilon": int(near),
-                 "cells_rechecked_in_double": int(rechecked)}
+                 "cells_rechecked_in_double": int(rechecked),
+                 **_fused_provenance(fused)}

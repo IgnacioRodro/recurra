@@ -389,3 +389,107 @@ def test_mixed_is_the_default_precision_on_the_device():
     assert default.attrs["provenance"]["precision"] == "mixed"
     reference = rc.batch_rqa(X, rng=0, engine="numpy", n_jobs=1)
     _same_tables(reference, default, "default precision")
+
+
+# ------------------------------------ symmetry and fused decisions [DD-127]
+@pytest.mark.requires("torch")
+@pytest.mark.parametrize("metric", ["euclidean", "chebyshev"])
+@pytest.mark.parametrize("precision", ["double", "mixed"])
+def test_a_theiler_window_wider_than_a_band_changes_nothing(metric, precision):
+    """The diagonals are searched in the upper half only, from the first one
+    outside the Theiler band; with a window of 30 and bands of 7 rows that
+    first diagonal starts several bands to the right."""
+    X = _windows(301, count=3)
+    ref, ref_h = rc.batch_rqa(X, theiler=30, metric=metric, rng=4, engine="numpy",
+                              n_jobs=1, return_histograms=True)
+    for memory in (None, 301 * 7 * _bytes(precision) / 1e9):   # one window, 7 rows
+        got, got_h = rc.batch_rqa(X, theiler=30, metric=metric, rng=4, engine="torch",
+                                  device="cpu", precision=precision,
+                                  device_memory_gb=memory, return_histograms=True)
+        _same_tables(ref, got, f"{metric}, {precision}, memory={memory}")
+        for a, b in zip(ref_h, got_h, strict=True):
+            for kind in ("diagonal", "vertical", "white_vertical"):
+                assert np.array_equal(getattr(a, kind), getattr(b, kind)), kind
+    if memory is not None:
+        assert got.attrs["provenance"]["band_rows"] == {301: 7}
+
+
+def _fuse_here(monkeypatch):
+    """Let the fused decisions run on the CPU, with a fresh cache."""
+    import recurra.engine.torch_rqa as torch_rqa
+
+    monkeypatch.setattr(torch_rqa, "_FUSE_ON_CPU", True)
+    monkeypatch.setattr(torch_rqa, "_DECIDERS", {})
+    monkeypatch.setattr(torch_rqa, "_FUSE_WARNED", set())
+    return torch_rqa
+
+
+@pytest.mark.requires("torch")
+def test_fusion_that_cannot_compile_says_so_and_gives_the_same_numbers(monkeypatch):
+    import torch
+
+    _fuse_here(monkeypatch)
+
+    def refuse(*a, **k):
+        raise RuntimeError("no compiler here")
+
+    monkeypatch.setattr(torch, "compile", refuse)
+    X = _windows(200, count=2)
+    ref = rc.batch_rqa(X, rng=0, engine="numpy", n_jobs=1)
+    with pytest.warns(rc.CaveatWarning, match="could not be compiled"):
+        got = rc.batch_rqa(X, rng=0, engine="torch", device="cpu")
+    _same_tables(ref, got, "fallback")
+    prov = got.attrs["provenance"]
+    assert prov["fused_decisions"] is False
+    assert "no compiler here" in prov["fused_decisions_failed"][0]
+
+
+@pytest.mark.requires("torch")
+def test_gpu_compile_false_skips_the_attempt(monkeypatch):
+    import torch
+
+    _fuse_here(monkeypatch)
+    monkeypatch.setattr(torch, "compile", lambda *a, **k: pytest.fail("compiled"))
+    monkeypatch.setattr(rc.get_config(), "gpu_compile", False)
+    got = rc.batch_rqa(_windows(150, count=2), rng=0, engine="torch", device="cpu")
+    assert got.attrs["provenance"]["fused_decisions"] is False
+
+
+@pytest.mark.slow
+@pytest.mark.requires("torch")
+@pytest.mark.parametrize("theiler", [0, 1, 5])
+def test_fused_decisions_equal_the_reference(monkeypatch, theiler):
+    """Compiled on the CPU (C++ instead of GPU kernels; tens of seconds the
+    first time). Mixed precision: the fused float32 pass may round otherwise
+    in the last bit, and every cell where that could matter is recomputed."""
+    torch_rqa = _fuse_here(monkeypatch)
+    X = _signals(601)["lorenz"]
+    _compare_engines(X, theiler=theiler, device="cpu", precision="mixed")
+    far = X.copy()
+    far[:300] += 2000.0
+    far[300:] -= 2000.0
+    _compare_engines(far, theiler=theiler, device="cpu", precision="mixed",
+                     memories=(8.0,))
+    failed = [d.reason for d in torch_rqa._DECIDERS.values() if not d.ok]
+    if failed:
+        pytest.skip(f"torch.compile is not usable here: {failed[0]}")
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize("theiler", [0, 1, 5])
+def test_cuda_fused_and_plain_decisions_agree(monkeypatch, theiler):
+    """On the GPU the float32 decisions run fused; they must give the plain
+    path's tables and histograms, and the fusion must actually have run."""
+    X = np.stack([_signals(1157)[s] for s in ("noise", "sine", "lorenz")])
+    fused, fused_h = rc.batch_rqa(X, theiler=theiler, rng=3, engine="torch",
+                                  device="cuda:0", return_histograms=True)
+    prov = fused.attrs["provenance"]
+    assert prov["fused_decisions"], prov.get("fused_decisions_failed")
+    monkeypatch.setattr(rc.get_config(), "gpu_compile", False)
+    plain, plain_h = rc.batch_rqa(X, theiler=theiler, rng=3, engine="torch",
+                                  device="cuda:0", return_histograms=True)
+    assert plain.attrs["provenance"]["fused_decisions"] is False
+    _same_tables(plain, fused, f"theiler={theiler}")
+    for a, b in zip(plain_h, fused_h, strict=True):
+        for kind in ("diagonal", "vertical", "white_vertical"):
+            assert np.array_equal(getattr(a, kind), getattr(b, kind)), kind
