@@ -46,17 +46,17 @@ python examples/run_all.py        # 54 figures, 45 tables, 3 run reports
 | 12 | `test_preprocess.py` | Filtering and Hilbert | DD-11, DD-12 | 10 |
 | 13 | `test_realdata.py` | test_realdata.py |  | 15 |
 | 14 | `test_recording.py` | The Recording object | DD-07, DD-04 | 5 |
-| 15 | `test_recurrence.py` | Recurrence structures | DD-19, DD-20, DD-33, DD-34, DD-36 | 41 |
+| 15 | `test_recurrence.py` | Recurrence structures | DD-19, DD-20, DD-33, DD-34, DD-36 | 43 |
 | 16 | `test_report.py` | Run reports | DD-37 | 8 |
-| 17 | `test_rqa.py` | test_rqa.py |  | 26 |
+| 17 | `test_rqa.py` | test_rqa.py |  | 28 |
 | 18 | `test_scaling.py` | The scaling policy | DD-02 | 8 |
 | 19 | `test_signals.py` | The synthetic generator | DD-13, DD-48 | 29 |
-| 20 | `test_statespace.py` | State space construction | DD-21, DD-23, DD-25, DD-28 | 50 |
-| 21 | `test_threshold.py` | Threshold selection | DD-32, DD-35 | 18 |
+| 20 | `test_statespace.py` | State space construction | DD-21, DD-23, DD-25, DD-28 | 54 |
+| 21 | `test_threshold.py` | Threshold selection | DD-32, DD-35 | 24 |
 | 22 | `test_validation.py` | test_validation.py |  | 26 |
 | 23 | `test_viz.py` | Figures | DD-27, DD-30, DD-31, DD-38, DD-49..52 | 41 |
 | 24 | `test_windowed.py` | Windowed analysis | DD-39, DD-40, DD-41 | 49 |
-| | | | **total** | **513 functions** |
+| | | | **total** | **527 functions** |
 
 Parametrised tests expand to more cases; run `pytest -q` for the count.
 
@@ -426,6 +426,8 @@ Decisions: DD-19, DD-20, DD-33, DD-34, DD-36
 | `test_streaming_is_called_stream_and_the_old_name_still_works` | Streaming is called stream and the old name still works. |
 | `test_epsilon_at_rounding_level_is_reported` | A sine with 2.5% exactly repeated pairs and a target of 0.02. |
 | `test_single_precision_reaches_every_structure` | Single precision reaches every structure. |
+| `test_the_plot_does_not_depend_on_the_number_of_blas_threads` | DD-33: the cross term of the distance is a matrix product, and a multithreaded BLAS may split it differently with each thread count. The plot and its RQA must not change. Same trajectory as the che... |
+| `test_band_clearing_matches_the_broadcast_mask` | DD-124: the Theiler band is cleared one strided diagonal at a time. Checked against the integer mask it replaced, on random blocks of every shape and position, contiguous and not. |
 
 ## 16. `test_report.py` — Run reports
 
@@ -449,7 +451,9 @@ Decisions: DD-37
 | Test | What it checks |
 |---|---|
 | `test_run_carry` _(×7)_ | The carry across a tile boundary, on cases checkable by hand [DD-56]. |
-| `test_streaming_histogram_equals_dense` _(×3)_ | The whole long-signal strategy rests on this being exact [DD-56]. |
+| `test_streaming_histogram_equals_dense` _(×3)_ | The whole long-signal strategy rests on this being exact [DD-56]. The plot is streamed, so the histogram is built from recomputed bands, and only then materialised for the reference. |
+| `test_band_histogram_equals_both_references` _(×3)_ | DD-124: the band version must agree count for count with the naive dense reference and with the 0.25 tile version, for band heights from one row to the whole matrix, streamed or stored, on an odd s... |
+| `test_band_histogram_on_cross_joint_and_fan_plots` _(×3)_ | DD-124 on the other structures: rectangular cross plots in both orientations (no Theiler band), a joint plot (AND of two parts) and an asymmetric FAN plot, which keeps its band but not its symmetry. |
 | `test_histogram_rate_matches_the_matrix` | Histogram rate matches the matrix. |
 | `test_every_point_is_on_a_line_of_length_one_or_more` | Conservation: the diagonal histogram must account for every recurrent point, since every point lies on a diagonal run of at least one. |
 | `test_white_noise_determinism_is_twice_the_rate` | For an independent recurrence matrix of density p, the fraction of points on diagonal lines of length >= 2 is 1 - (1 - p)^2, about 2p. **At l_min=2, which is where that identity is defined.** The l... |
@@ -588,6 +592,10 @@ Decisions: DD-21, DD-23, DD-25, DD-28
 | `test_lorenz_embedding_is_recovered` | Ground truth: tau about 16 samples at dt=0.01 by AMI, and m=3 by FNN. |
 | `test_fnn_handles_an_exactly_periodic_series` | A sine sampled at an integer number of samples per period repeats its points to within rounding. FNN used to count those duplicates as false neighbours and return the top of m_range (12); a circle ... |
 | `test_an_estimate_at_the_edge_of_its_range_warns` | P3: a value forced by the search range, not by the data, says so. |
+| `test_a_wide_array_is_read_as_given_everywhere` | DD-123: a 2-D array is (n_points, n_dimensions) in every function. Before, recurrence_plot refused this array, threshold read it as 30 points, and estimate_tau, estimate_m, custom and the dynamical... |
+| `test_a_one_dimensional_series_is_one_column` | DD-123: a 1-D vector is a scalar series of len(x) points. threshold and recurrence_plot used to read it as one point in 500 dimensions and fail, and the scaling helpers to return a single row. |
+| `test_npy_channels_first_guess_is_announced` | DD-123, P3: reading a short wide .npy file as channels-first is a guess on the caller's behalf, so it warns and is recorded. |
+| `test_other_shapes_are_refused` | Other shapes are refused. |
 
 ## 21. `test_threshold.py` — Threshold selection
 
@@ -615,6 +623,12 @@ Decisions: DD-32, DD-35
 | `test_threshold_frame_is_exportable` | Threshold frame is exportable. |
 | `test_cross_threshold_requires_matching_dimensions` | Cross threshold requires matching dimensions. |
 | `test_cross_threshold_hits_target` | Cross threshold hits target. |
+| `test_epsilon_is_never_an_observed_distance` _(×4)_ | DD-122: epsilon is kept off every distance the data contain, so the plot equals the reference whatever formula computes the distances. Before, it differed from cdist in 5 to 20% of the draws at eve... |
+| `test_small_matrices_take_every_pair_once` | DD-122: with fewer admissible pairs than samples the quantile is the exact one, the same for every seed. Sampled with replacement, a 12-point plot asked for 0.20 got anything from 0.15 to 0.35. |
+| `test_ties_are_inside` | DD-122: on quantised data many pairs share the distance the quantile lands on; all of them are recurrent, none is left to rounding. |
+| `test_fan_rows_hold_exactly_n_neighbours` | DD-122: the FAN epsilon of a point was the distance to its n-th neighbour, which the matrix then recomputed with another formula; 47% of the rows held n - 1 recurrences. It now lies between the n-t... |
+| `test_small_cross_thresholds_are_exact` | DD-122 for cross plots: a small one takes every pair once, so epsilon does not depend on the seed, and it stays off every cross distance. |
+| `test_per_block_rates_do_not_depend_on_the_weights` | DD-35, revised in 0.26: each block's epsilon is estimated on the coordinates the matrix compares, so every block sees the rate it was given. Estimated on the unweighted coordinates, the block weigh... |
 
 ## 22. `test_validation.py` — test_validation.py
 

@@ -213,9 +213,7 @@ class RecurrenceMatrix:
         reach = self.theiler - 1
         if (self.theiler > 0 and self.coords2 is None
                 and i0 - reach <= j1 - 1 and j0 - reach <= i1 - 1):
-            ii = np.arange(i0, i1)[:, None]
-            jj = np.arange(j0, j1)[None, :]
-            out &= np.abs(ii - jj) >= self.theiler
+            _clear_band(out, i0, j0, self.theiler)
         return out
 
     def tiles(self, tile_size: int | None = None) -> Iterator[Tile]:
@@ -243,8 +241,10 @@ class RecurrenceMatrix:
                 "(.tiles(), .recurrence_rate()) or raise the budget."
             )
         M = np.zeros(self.shape, dtype=np.uint8 if self.dtype == "uint8" else bool)
-        for t in self.tiles():
-            M[t.i0:t.i1, t.j0:t.j1] = t.data      # bool -> uint8 on assignment
+        h = band_rows(self.n_rows, self.n_cols, self.tile_size)        # [DD-124]
+        for i0 in range(0, self.n_rows, h):
+            i1 = min(i0 + h, self.n_rows)
+            M[i0:i1] = self._block(i0, i1, 0, self.n_cols)   # bool -> uint8
         self._matrix = M
         return M
 
@@ -277,8 +277,13 @@ class RecurrenceMatrix:
         if self._rr is not None and not recompute:
             return self._rr
         count = 0
-        for t in self.tiles():
-            count += int(np.count_nonzero(t.data))
+        if self._matrix is not None:
+            count = int(np.count_nonzero(self._matrix))
+        else:
+            h = band_rows(self.n_rows, self.n_cols, self.tile_size)    # [DD-124]
+            for i0 in range(0, self.n_rows, h):
+                i1 = min(i0 + h, self.n_rows)
+                count += int(np.count_nonzero(self._block(i0, i1, 0, self.n_cols)))
         n, m = self.shape
         if self.coords2 is None:
             total = n * m - theiler_band_cells(n, m, self.theiler)
@@ -367,6 +372,44 @@ class RecurrenceMatrix:
     def __repr__(self) -> str:  # pragma: no cover
         return (f"<RecurrenceMatrix {self.kind} {self.n_rows}x{self.n_cols} "
                 f"eps={self.threshold.scalar:.4g}>")
+
+
+#: Cells per band when a whole matrix is walked: the histograms, the rate and
+#: materialisation [DD-124]. The memory plan picks tiles as large as the
+#: budget allows (8192 x 8192 by default), which bounds memory but is slow to
+#: scan: at 5120 points one such tile took 35 ns per cell to compute, against 7
+#: in bands of about a million cells, which stay in cache.
+BAND_CELLS = 1 << 20
+
+
+def band_rows(n_rows: int, n_cols: int, tile_size: int | None = None) -> int:
+    """Rows per full-width band: ``BAND_CELLS``, or one square tile if smaller."""
+    cells = BAND_CELLS if tile_size is None else min(tile_size * tile_size, BAND_CELLS)
+    return int(max(1, min(n_rows, cells // max(n_cols, 1))))
+
+
+def _clear_band(block: np.ndarray, i0: int, j0: int, theiler: int) -> None:
+    """Set to zero, in place, the cells of a block with ``|i - j| < theiler``.
+
+    One strided assignment per excluded diagonal, ``2 theiler - 1`` of them,
+    instead of an integer array the size of the block: in a C-ordered block of
+    width ``w`` the cells of one diagonal are ``w + 1`` apart in memory. The
+    cells cleared are the same [DD-115]; the cost no longer grows with the
+    width of the block, which matters for the full-width bands of DD-124.
+    """
+    h, w = block.shape
+    if not block.flags["C_CONTIGUOUS"]:
+        # reshape would copy and the assignment below would be lost
+        ii = np.arange(i0, i0 + h)[:, None]
+        jj = np.arange(j0, j0 + w)[None, :]
+        block &= np.abs(ii - jj) >= theiler
+        return
+    flat = block.reshape(-1)              # a view, since the block is C-contiguous
+    for k in range(-(theiler - 1), theiler):          # global offset j - i
+        o = k + i0 - j0                                # local offset c - r
+        r0, r1 = max(0, -o), min(h, w - o)
+        if r0 < r1:
+            flat[r0 * (w + 1) + o:r1 * (w + 1) + o:w + 1] = False
 
 
 def theiler_band_cells(n: int, m: int, theiler: int) -> int:

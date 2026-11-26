@@ -67,12 +67,24 @@ def read_csv(path, fs=None, time_column=None, sep=None, **kw):
 def read_npy(path, fs=None, labels=None, **kw):
     arr = np.load(path, allow_pickle=False)
     arr = np.atleast_2d(arr)
+    meta = {"source": str(path), "format": "npy"}
     if arr.shape[0] < arr.shape[1] and arr.shape[0] <= 512:
-        # heuristic: more columns than rows and few rows -> channels-first
+        # A file of recordings is usually stored channels-first, so a short wide
+        # array is read that way. That is a guess on the caller's behalf, so it
+        # is announced and recorded rather than made silently [DD-123, P3].
+        import warnings
+
+        from ..exceptions import CaveatWarning
+
+        warnings.warn(
+            "read_npy: the array has fewer rows than columns, so its rows were read "
+            "as channels (channels-first). Save it as (n_samples, n_channels) to "
+            "avoid the guess [DD-123].", CaveatWarning, stacklevel=2)
         arr = arr.T
+        meta["transposed"] = "channels-first"
     labels = labels or [f"ch{i:02d}" for i in range(arr.shape[1])]
     channels = {str(labels[i]): np.asarray(arr[:, i], dtype=float) for i in range(arr.shape[1])}
-    return channels, fs, {}, {"source": str(path), "format": "npy"}
+    return channels, fs, {}, meta
 
 
 def read_npz(path, fs=None, **kw):

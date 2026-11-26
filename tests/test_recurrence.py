@@ -378,3 +378,57 @@ def test_single_precision_reaches_every_structure(ss_pac):
                                     rng=0).precision == "single"
     wr = rc.windowed_recurrence(ss_pac, 3, target_rr=0.05, precision="single", rng=0)
     assert wr[0].precision == "single"
+
+
+@pytest.mark.requires("threadpoolctl")
+def test_the_plot_does_not_depend_on_the_number_of_blas_threads():
+    """DD-33: the cross term of the distance is a matrix product, and a
+    multithreaded BLAS may split it differently with each thread count. The
+    plot and its RQA must not change. Same trajectory as the check run on a
+    40-core server, where 1, 8 and 38 threads gave the same hash; here it runs
+    with one thread and with every thread the machine has, on an odd size that
+    spans several tiles."""
+    import hashlib
+    import os
+
+    from threadpoolctl import threadpool_limits
+
+    g = np.random.default_rng(0)
+    t = np.arange(2500) / 128.0
+    phi = 2 * np.pi * 6 * t + 0.3 * np.cumsum(g.standard_normal(t.size)) / 30
+    X = np.column_stack([np.cos(phi), np.sin(phi),
+                         1 + 0.5 * np.cos(phi) + 0.2 * g.standard_normal(t.size)]) + 3.0
+
+    def run(n_threads):
+        with threadpool_limits(limits=n_threads, user_api="blas"):
+            th = threshold(X, target_rr=0.05, rng=0)
+            rm = recurrence_plot(X, th, store="memory", tile_size=700)
+            M = np.ascontiguousarray(rm.matrix)
+            return hashlib.sha256(M.tobytes()).hexdigest(), rc.rqa(rm)["DET"]
+
+    one = run(1)
+    many = run(max(os.cpu_count() or 1, 2))
+    assert one[0] == many[0]
+    assert np.asarray(one[1]).ravel()[0] == np.asarray(many[1]).ravel()[0]
+
+
+def test_band_clearing_matches_the_broadcast_mask():
+    """DD-124: the Theiler band is cleared one strided diagonal at a time.
+    Checked against the integer mask it replaced, on random blocks of every
+    shape and position, contiguous and not."""
+    from recurra.recurrence.core import _clear_band
+
+    g = np.random.default_rng(0)
+    for _ in range(2000):
+        h, w = (int(v) for v in g.integers(1, 40, 2))
+        i0, j0 = (int(v) for v in g.integers(0, 60, 2))
+        theiler = int(g.integers(1, 12))
+        B = g.random((h, w)) < 0.7
+        ii, jj = np.arange(i0, i0 + h)[:, None], np.arange(j0, j0 + w)[None, :]
+        ref = B & (np.abs(ii - jj) >= theiler)
+        C = B.copy()
+        _clear_band(C, i0, j0, theiler)
+        assert np.array_equal(C, ref)
+        F = np.asfortranarray(B)
+        _clear_band(F, i0, j0, theiler)
+        assert np.array_equal(F, ref)

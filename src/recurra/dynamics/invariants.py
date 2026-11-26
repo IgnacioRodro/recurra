@@ -24,6 +24,7 @@ import pandas as pd
 from scipy.spatial import cKDTree
 
 from ..config import SeedLike, resolve_rng, spawn_rngs
+from ..core.points import as_points, n_points
 from ..exceptions import InferenceWarning, ParameterError
 from .scaling import ScalingRegion, find_scaling_region, fixed_region
 
@@ -109,7 +110,7 @@ def resolve_theiler(theiler: int | str, source) -> int:
             span = max(span, int((int(m) - 1) * int(tau)))
     n = getattr(source, "n_points", None)
     if n is None:
-        n = np.atleast_2d(np.asarray(source)).shape[0]
+        n = n_points(source)          # a 1-D series has len(x) points [DD-123]
     return int(min(max(span, n // 100), n // 20))
 
 
@@ -117,10 +118,7 @@ def _as_points(source) -> tuple[np.ndarray, float]:
     """Accept a StateSpace or an array; return coordinates and sampling rate."""
     if hasattr(source, "weighted_coords"):
         return np.asarray(source.weighted_coords, dtype=float), float(source.fs)
-    arr = np.atleast_2d(np.asarray(source, dtype=float))
-    if arr.shape[0] < arr.shape[1]:
-        arr = arr.T
-    return arr, 1.0
+    return as_points(source, name="dynamical measures"), 1.0       # [DD-123]
 
 
 # ============================================================ dimension

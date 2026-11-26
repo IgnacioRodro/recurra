@@ -35,6 +35,7 @@ import numpy as np
 import pandas as pd
 
 from ..config import SeedLike, resolve_rng
+from ..core.points import n_points
 from ..exceptions import CaveatWarning, ComparabilityWarning, ParameterError
 from ..provenance import Step, provenance_frame
 from ..recurrence.builders import (
@@ -62,8 +63,7 @@ def _window_source(source, w: Window):
 
 
 def _n_points(source) -> int:
-    return (source.n_points if hasattr(source, "n_points")
-            else np.atleast_2d(np.asarray(source)).shape[0])
+    return n_points(source)           # a 1-D series has len(x) points [DD-123]
 
 
 def _fs(source, default: float = 1.0) -> float:
@@ -129,6 +129,25 @@ class WindowedRecurrence:
     def __iter__(self) -> Iterator[tuple[Window, RecurrenceMatrix]]:
         for i in range(len(self)):
             yield self.windows[i], self[i]
+
+    def _layout(self) -> pd.DataFrame:
+        """Geometry and threshold of every window, without computing a matrix.
+
+        The columns :meth:`metrics` reports before the rate, read from each
+        window's structure as built; streaming structures are built without
+        touching a single tile [DD-124].
+        """
+        rows = []
+        for i, w in enumerate(self.windows):
+            rm = self[i]
+            th = rm.threshold
+            rows.append({"subject": self.subject, "kind": self.kind,
+                         "scope": self.scope, **w.to_row(),
+                         "n_rows": rm.n_rows, "n_cols": rm.n_cols, "dim": rm.dim,
+                         "metric": rm.metric, "theiler": rm.theiler,
+                         "threshold_mode": th.mode, "epsilon": th.scalar,
+                         "target_rr": th.target})
+        return pd.DataFrame(rows)
 
     def matrices(self) -> dict[str, RecurrenceMatrix]:
         """All matrices, keyed by window label. Materialises every window."""
@@ -198,19 +217,7 @@ class WindowedRecurrence:
         for i, w in enumerate(self.windows):
             rm = self[i]
             th = rm.threshold
-            row = {
-                "subject": self.subject, "kind": self.kind, "scope": self.scope,
-                **w.to_row(),
-                "n_rows": rm.n_rows, "n_cols": rm.n_cols, "dim": rm.dim,
-                "metric": rm.metric, "theiler": rm.theiler,
-                "threshold_mode": th.mode, "epsilon": th.scalar,
-                "target_rr": th.target, "recurrence_rate": rm.recurrence_rate(),
-            }
-            if self.kind == "jrp" and hasattr(rm, "subsystem_rates"):
-                rates = rm.subsystem_rates()
-                for k, r in enumerate(rates):
-                    row[f"rr_subsystem_{k}"] = r
-                row["independence_ratio"] = rm.independence_ratio()
+            values = hist = None
             if rqa:
                 from ..rqa.metrics import rqa as _rqa
 
@@ -225,6 +232,24 @@ class WindowedRecurrence:
                                     denominator=denominator,
                                     metrics="all" if rqa is True else list(rqa),
                                     return_histogram=True)
+                # The histogram counted the recurrent pairs over the same
+                # region, so the rate is read from it instead of walking the
+                # matrix a second time [DD-124].
+                rm._rr = hist.recurrence_rate
+            row = {
+                "subject": self.subject, "kind": self.kind, "scope": self.scope,
+                **w.to_row(),
+                "n_rows": rm.n_rows, "n_cols": rm.n_cols, "dim": rm.dim,
+                "metric": rm.metric, "theiler": rm.theiler,
+                "threshold_mode": th.mode, "epsilon": th.scalar,
+                "target_rr": th.target, "recurrence_rate": rm.recurrence_rate(),
+            }
+            if self.kind == "jrp" and hasattr(rm, "subsystem_rates"):
+                rates = rm.subsystem_rates()
+                for k, r in enumerate(rates):
+                    row[f"rr_subsystem_{k}"] = r
+                row["independence_ratio"] = rm.independence_ratio()
+            if rqa:
                 row.update(values)
                 self._histograms[(row.get("subject", ""), int(row["window"]))] = hist
                 row["l_min"] = l_min

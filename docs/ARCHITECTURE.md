@@ -24,7 +24,8 @@ src/recurra/
 ├─ cli.py                 ✅  recurra doctor | figures | generate
 │
 ├─ core/
-│   └─ recording.py       ✅  Recording, copy-on-write                 [DD-07]
+│   ├─ recording.py       ✅  Recording, copy-on-write                 [DD-07]
+│   └─ points.py          ✅  as_points: one rule for raw arrays      [DD-123]
 │
 ├─ io/
 │   ├─ ingest.py          ✅  ingest() -- 11 input shapes              [DD-08]
@@ -348,7 +349,7 @@ value with the region and any warning; `float(invariant)` gives the number.
 
 ## 5. Test suite
 
-**513 test functions, all green** (more cases once parametrised).
+**527 test functions, all green** (more cases once parametrised).
 
 | File | Covers |
 |---|---|
@@ -359,13 +360,13 @@ value with the region and any warning; `float(invariant)` gives the number.
 | `test_scaling.py` | **DD-02**: circle √2, balancing, dominance, λ, gain invariance |
 | `test_signals.py` | spectral slopes, monotonicity in α, reproducibility, parallel RNG |
 | `test_export.py` | sidecars, environment stamp, accumulator |
-| `test_statespace.py` | **DD-21** identity, 16 constructors, three routes, transforms |
-| `test_threshold.py` | **DD-32** Theiler sampling, all 8 modes, target accuracy |
-| `test_recurrence.py` | **DD-33** kernel equivalence, **streaming = dense bit for bit**, Theiler bands, RP/CRP/JRP, memory refusal |
+| `test_statespace.py` | **DD-21** identity, 16 constructors, three routes, transforms, **DD-123** one reading of raw arrays |
+| `test_threshold.py` | **DD-32** Theiler sampling, all 8 modes, target accuracy, **DD-122** no pair at epsilon, checked against `cdist`; exact small samples; FAN rows; per-block rates |
+| `test_recurrence.py` | **DD-33** kernel equivalence, **streaming = dense bit for bit**, Theiler bands, RP/CRP/JRP, memory refusal, independence from the number of BLAS threads |
 | `test_viz.py` | figure registry, input immutability, shared limits, **DD-38** pooling, **DD-30** language guards |
 | `test_report.py` | sections, artefact registration, rendering, language |
 | `test_comparability.py` | **DD-42** the three failure modes detected, contracts and violations, **DD-43** metric-family licensing, **DD-44** window-by-window group separation, feature matrices |
-| `test_rqa.py` | **DD-56** carry logic and streaming equivalence over 48 combinations, **DD-58/59** conventions, ground truth on noise, sine and Lorenz, CRQA lag recovery, integration with the windowed table |
+| `test_rqa.py` | **DD-56** carry logic and streaming equivalence over 48 combinations, **DD-124** band histograms equal to two independent references, **DD-58/59** conventions, ground truth on noise, sine and Lorenz, CRQA lag recovery, integration with the windowed table |
 | `test_dynamics.py` | **DD-61** scaling-region location, **DD-62** unit conversion, **DD-63** the guards for numerically degenerate curves, plus ground truth for D2, lambda_1, K2, DFA, Higuchi and three entropies |
 | `test_validation.py` | **DD-64/65/66/67** the harmonic artefact exists and is monotone; at equal modulation index DET and the diagonal family distinguish genuine coupling from it, the vertical family points the other way; every signal has a unique seed |
 | `test_parallel.py` | **DD-81** results identical across job counts, streams derived by position, the worker is picklable; **DD-82** the serial path never needs joblib |

@@ -129,6 +129,9 @@ Status: `accepted` · `provisional` · `revised` · `rejected`
 | [DD-119](#dd-119) | **Meta-recurrence of the window measurements** | accepted | F16 |
 | [DD-120](#dd-120) | A recurrence plot is drawn with its signals | accepted | F16 |
 | [DD-121](#dd-121) | **D2 is a small-radius limit: the search stays below the saturating scale** | accepted | F16 |
+| [DD-122](#dd-122) | **Epsilon is never an observed distance; a small sample is the whole population** | accepted | F17 |
+| [DD-123](#dd-123) | A raw 2-D array is always (n_points, n_dimensions) | accepted | F17 |
+| [DD-124](#dd-124) | **Line histograms by whole-array operations over full-width bands** | accepted | F17 |
 
 ---
 
@@ -745,6 +748,8 @@ where the cross term is a single matrix product routed to BLAS. One temporary of
 
 Verified numerically identical to naive broadcasting to 1e-9, and clamped at zero so floating-point noise cannot produce negative squared distances.
 
+**Verified (0.26.0): independent of the number of BLAS threads.** A multithreaded BLAS may split the matrix product differently for each thread count, which could change a cell at the threshold. On a 40-core Linux server (numpy 2.5.5), a 6000-point phase-amplitude trajectory offset from the origin, at a target rate of 0.05, gave the same plot (SHA-256 of the matrix `ae7609314aecd085…`, 1 774 994 recurrent cells) and the same DET (0.1230652047274526) with 1, 8 and 38 threads, and the same again on a 2-core machine with numpy 2.5.3. `test_the_plot_does_not_depend_on_the_number_of_blas_threads` keeps the check, with one thread against all of them.
+
 ---
 
 <a id="dd-34"></a>
@@ -790,6 +795,23 @@ Two are worth singling out:
 `adaptive_dim` additionally reports epsilon as a fraction of the attractor radius, and warns above 0.5 that the plot is reflecting the size of the cloud rather than its structure.
 
 A guard rail worth noting: `percentile` rejects values outside [0, 1] with a message naming the mistake, because the draft's README passed `percentile=5.0` meaning the fifth percentile, which silently clamped to 1.0 and produced a completely full recurrence plot.
+
+**Revised (0.26.0).** Two of the modes did not do what this entry says.
+
+- **`fan`** kept the neighbour count constant only in exact arithmetic: each
+  point's epsilon was the distance to its k-th neighbour, which the matrix
+  recomputed with another formula, and 47% of the rows of a 10-neighbour plot
+  held 9. Epsilon now lies between the k-th neighbour and the next one
+  [DD-122].
+- **`per_block`** estimated each block's epsilon on the unweighted
+  coordinates while the matrix compares the weighted ones, so the block
+  weights leaked back in: on a phase-amplitude space with weights 0.79 and
+  1.21 and a target of 0.20, the phase block came out at 0.221 and the
+  amplitude block at 0.181. Epsilon is now estimated on the coordinates the
+  matrix compares; since a block's weight is one factor on all its distances,
+  the decision no longer depends on the weights, and each block sees 0.200.
+  The epsilons are therefore reported in weighted units, like the scalar
+  ones. Test: `test_per_block_rates_do_not_depend_on_the_weights`.
 
 ---
 
@@ -4739,3 +4761,230 @@ checks judge the result. `region=(lo, hi)` still fits any window by hand.
 to 2.06 (reference 2.05); ten were unflagged and the two flagged ones were
 right too. The test is now a contract over four such trajectories, one of
 them the case that gave 1.61, instead of a fact about one machine.
+
+---
+
+<a id="dd-122"></a>
+## DD-122 · Epsilon is never an observed distance; a small sample is the whole population
+
+**Status:** accepted (0.26.0). Refines [DD-32], [DD-35] and [DD-115].
+
+**Context.** A recurrence decision `d <= epsilon` can only be reproduced if no
+pair lies within rounding distance of epsilon. Three things put pairs there.
+
+- *The quantile is very often a sampled distance.* A symmetric matrix holds
+  every distance twice, and a sample drawn with replacement repeats pairs, so
+  the interpolated quantile lands between two equal values. Over random 3-D
+  clouds (Theiler 1 or 2, 40 to 200 draws per size), epsilon equalled a
+  sampled distance in 52% of the draws at 12 points, 60% at 40 and at 300, and
+  10% at 1280. The matrix then compares that same pair with a distance
+  computed by another formula -- the norm expansion of [DD-33] on centred
+  coordinates [DD-110], where the sampler takes direct differences -- so
+  whether it is recurrent is decided by the last bit. Against `scipy`'s
+  `cdist` as reference, the matrix differed in 20%, 10%, 10%, 20% and 5% of
+  the draws at 12, 20, 40, 300 and 1280 points.
+- *FAN epsilon is a neighbour's distance by definition.* It came from the
+  k-d tree and the matrix recomputed it: in a FAN plot with 10 neighbours on
+  1280 points, **47% of the rows held 9**.
+- *Small samples drawn with replacement.* When there were fewer admissible
+  pairs than `n_samples`, the sampler drew as many as there were, with
+  replacement, so about a third were missing and some counted twice. A
+  12-point plot (the size of a short meta-recurrence plot [DD-119]) asked for
+  a rate of 0.20 got anything from 0.146 to 0.346 depending on the seed; at 40
+  points, 0.177 to 0.231.
+
+A second engine with its own rounding -- the GPU backend of [DD-16], or single
+precision -- would decide the pairs at epsilon its own way, so without a rule
+there is no definition of "the two engines agree".
+
+**Decision.**
+
+1. If the admissible pairs are no more than `n_samples` (about 447 points at
+   the default 200 000), every one is taken once, in row-major order, without
+   using the random generator. The quantile is then the exact one. Cross plots
+   do the same when `n1 * n2 <= n_samples`.
+2. Once epsilon is chosen -- by quantile, by bisection, per block or for a
+   cross plot -- it is moved, if it lies within a relative `TIE_RTOL = 1e-9`
+   of a sampled distance, to the midpoint of the gap between the sampled
+   distances on either side of it. The pairs the sample counts as recurrent
+   do not change: a distance equal to epsilon stays inside, ties included.
+   `Threshold.diagnostics["moved_off_a_sampled_distance"]` records the move.
+3. In FAN mode each point's epsilon is the midpoint between its k-th
+   neighbour's distance and the next distinct one. Ties with the k-th
+   neighbour are inside, and `achieved_rr` reports the mean count per row.
+
+`1e-9` sits far above the rounding error of any distance formula in double
+precision (about 1e-14 relative near epsilon) and far below the gaps between
+neighbouring sampled distances: after the move, the closest admissible
+distance to epsilon was at least 7.4e-7 relative wherever the sample was
+complete.
+
+**Alternatives rejected.**
+
+- *Including ties through a tolerance in the comparison*, `d <= eps (1 + delta)`:
+  every engine would need the same `delta`, and the pairs at the edge of the
+  tolerance band would again be decided by rounding.
+- *Always moving to the midpoint*, not only near a sampled distance: it would
+  change every epsilon in its last digits, and every published number with
+  it, where nothing was wrong.
+- *An exact quantile over all pairs at every size*: O(N^2) on the CPU path.
+  Worth reconsidering for a device engine, where the full matrix is computed
+  anyway, as its own decision.
+
+**Verified against `cdist`.** The matrix equals the reference in 40 of 40
+draws at 12, 20, 40, 300 and 1280 points (32 to 38 of 40 before). Up to 300
+points the rate is the exact quantile for every seed (0.2000 for all 40 draws
+at 12 points). All 12 800 rows of the FAN plots hold exactly 10 recurrences
+(6731 before).
+
+**Consequences.** Results change where the decision was arbitrary: plots
+below about 447 points (short windows, meta-recurrence plots), FAN plots,
+which recover the neighbour lost in about half the rows, and the draws where
+epsilon fell on a sampled distance, where in large matrices one or two pairs
+move. Tests: `test_epsilon_is_never_an_observed_distance`,
+`test_small_matrices_take_every_pair_once`, `test_ties_are_inside`,
+`test_fan_rows_hold_exactly_n_neighbours`,
+`test_small_cross_thresholds_are_exact`.
+
+---
+
+<a id="dd-123"></a>
+## DD-123 · A raw 2-D array is always (n_points, n_dimensions)
+
+**Status:** accepted (0.26.0). Applies the rule of [DD-118] to array input.
+
+**Context.** Every function that accepts a raw array instead of a
+`StateSpace` guessed its orientation, and they guessed differently. Given an
+array of 30 rows and 40 columns:
+
+| Function | Before 0.26 |
+|---|---|
+| `recurrence_plot`, `cross_recurrence_plot`, `joint_recurrence_plot` | refused it |
+| `threshold` | read 30 points |
+| `estimate_tau`, `estimate_m`, `custom`, dynamical measures | transposed it to 40 points, silently |
+
+A 1-D vector fared worse: `threshold` and the scaling helpers read it as one
+point in N dimensions, so `threshold` failed with "could not sample any
+admissible pair", `rms_pairwise_distance` returned 0 and `scale_array`
+returned a single row; `recurrence_plot` refused it.
+
+Transposing a wide array is right when the rows are channels and silently
+wrong when the array is wide on purpose: a meta-series with more measurements
+than windows [DD-119] became a cloud of measurements, which is how
+`plot_recurrence_panel` failed in 0.25.
+
+**Decision.** One helper, `recurra.core.points.as_points`, reads every raw
+array:
+
+- 1-D: one column, `(n, 1)`, a scalar series;
+- 2-D: as given, rows are points, never transposed;
+- anything else: `ParameterError`.
+
+A 2-D array with more columns than rows is still used as given, because it can
+be right, and the call warns once with a `GeometryWarning` of fixed text.
+Functions that pass an array on to others they call (a plot to its threshold)
+do not make those warn again. `read_npy` keeps its channels-first reading of
+short wide files, since that is how recordings are usually stored, but now
+announces it with a `CaveatWarning` and records it in the reader's metadata
+(P3).
+
+**Alternatives rejected.** *Transpose when wider than tall*, as four functions
+did: it cannot tell a wide array from a transposed one, and it is silent.
+*Refuse wide arrays*, as the plots did: a meta-series with more measurements
+than windows is legitimate.
+
+**Consequences.** Results change only for calls that passed a wide raw array
+to `estimate_tau`, `estimate_m`, `custom` or a dynamical measure (they now see
+the array as given), and for 1-D arrays, which now work where they failed.
+`StateSpace` input is unaffected. Tests:
+`test_a_wide_array_is_read_as_given_everywhere`,
+`test_a_one_dimensional_series_is_one_column`,
+`test_npy_channels_first_guess_is_announced`,
+`test_other_shapes_are_refused`.
+
+---
+
+<a id="dd-124"></a>
+## DD-124 · Line histograms by whole-array operations over full-width bands
+
+**Status:** accepted (0.26.0). Implements [DD-56] and [DD-57] differently;
+prepares [DD-16].
+
+**Context.** Profiling a window like those of a long-term iEEG study (a
+three-dimensional phase-amplitude trajectory, target rate 0.05) showed that
+the cost of RQA was the interpreter, not the arithmetic. `line_histogram`
+made one Python call per diagonal and per column of every tile: at 2560
+points, 12 767 calls and 0.54 s per plot, of which the distances took
+0.048 s. Three more costs came out of the same measurements:
+
+- the memory plan chooses tiles as large as the budget allows (8192 x 8192 by
+  default), so a whole window was one block; at 5120 points such a block took
+  35 ns per cell to compute, against 7 ns in blocks of about a million cells;
+- the Theiler band was cleared with an integer array the size of the block;
+- `batch_windowed_recurrence` checks comparability [DD-42], and to describe
+  each record it called `metrics()`, which walked every matrix for a rate
+  nothing in the check reads: a full extra pass per window, 44% of build plus
+  RQA at 2560 points. `metrics(rqa=True)` then walked each matrix twice more,
+  once for the rate and once for the histograms.
+
+**Decision.**
+
+1. `line_histogram` walks the matrix in **row bands of full width**, about
+   `BAND_CELLS = 2**20` cells each (fewer if `tile_size` asks for fewer), and
+   finds all the runs of a band at once: each column becomes a row of an
+   array, padded and differenced, so +1 and -1 mark where runs start and end;
+   diagonals are sheared into columns first. The carry of [DD-56] is one array
+   per kind of line. The Theiler band is a third cell state for white lines: a
+   white run is dropped when the cell before or after it is excluded, the rule
+   of [DD-57], tested analytically (`|i - j| < theiler`) so that it works across
+   bands. Counts go to integer histograms with `np.bincount`.
+2. The band is cleared with one strided assignment per excluded diagonal.
+3. `materialize()` and `recurrence_rate()` use the same bands; a stored matrix
+   is read rather than recomputed.
+4. The comparability check reads the geometry and thresholds of each window
+   without computing its matrix, and the rate is taken from the histogram
+   that RQA already accumulated. One pass per window remains.
+
+**Exact.** The histograms are identical, count for count, to the naive
+`line_histogram_dense` and to the 0.25 tile implementation (kept as
+`_line_histogram_tiles`): plots of 37, 211 and 1157 points, Theiler 0, 1, 2
+and 5, bands from one row to the whole matrix, streamed and stored, cross
+plots in both orientations, joint plots and asymmetric FAN plots. Each of
+three deliberate errors in the new code (no carry, no closing of an open run,
+no band flag at the end of a white run) fails 20 to 32 of those cases. Band
+size was chosen by measurement: 2**20 cells was within 10% of the best at
+every size from 1280 to 10 240 points.
+
+**Measured** (`tools/benchmark_engine.py`, one core of a 2-core Xeon at
+2.1 GHz, one BLAS thread, numpy 2.5.3; both runs in
+`docs/data/benchmarks/cpu_0.25.0.csv` and `cpu_0.26.0.dev0.csv`):
+
+| Points per window | Plot + histograms, one window: 0.25.0 → 0.26 | Batch of 8 windows, windows/s: 0.25.0 → 0.26 |
+|---|---|---|
+| 1280 | 0.173 → 0.018 s (x9.6) | 4.98 → 27.4 (x5.5) |
+| 2560 | 0.343 → 0.081 s (x4.3) | 1.59 → 9.17 (x5.8) |
+| 5120 | 1.574 → 0.296 s (x5.3) | 0.34 → 3.10 (x9.1) |
+| 10 240 | 7.81 → 1.20 s (x6.5) | 0.078 → 0.77 (x9.9) |
+
+The batch column is the call a study makes: windows, thresholds, the
+comparability check and the full RQA. The threshold estimate, 15 to 23 ms per
+window with the default 200 000 sampled pairs, did not change, so at 1280
+points it is now about half the time of a window. That is the next cost to
+address, and the one a device engine would not remove by itself. The
+parallel figures of this machine (two virtual cores) are not meaningful; the
+scaling with cores has to be measured on the target server.
+
+**Alternatives rejected.** *Numba or Cython kernels*: a compiled dependency
+for a gain the array version already gives, and a second implementation to
+keep exact. *Exploiting symmetry* (diagonals k and -k are equal in a
+symmetric plot): it would halve the diagonal work but not the rest, and FAN
+plots are not symmetric; left for later if measurement asks for it.
+
+**Consequences.** No result changes: the counts are identical. The full fast
+suite went from 3 min 13 s to about 2 min 40 s on the same machine. The same
+algorithm, on integer arrays only, is what the device engine of [DD-16] will
+run. Tests: `test_band_histogram_equals_both_references`,
+`test_band_histogram_on_cross_joint_and_fan_plots`,
+`test_band_clearing_matches_the_broadcast_mask`, and
+`test_streaming_histogram_equals_dense`, which now streams before it
+materialises.

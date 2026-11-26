@@ -24,6 +24,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from ..config import SeedLike, get_config
+from ..core.points import already_read, as_points
 from ..exceptions import CaveatWarning, ParameterError, ParameterWarning
 from ..provenance import Step
 from ..threshold.core import Threshold
@@ -37,13 +38,9 @@ from .memory import plan
 def _as_coords(source, name: str):
     if hasattr(source, "weighted_coords"):
         return (np.asarray(source.weighted_coords, dtype=float), source)
-    arr = np.atleast_2d(np.asarray(source, dtype=float))
-    if arr.shape[0] < arr.shape[1]:
-        raise ParameterError(
-            f"{name}: expected (n_points, n_dimensions); got {arr.shape}, which has "
-            "more dimensions than points. Transpose it if that is wrong."
-        )
-    return arr, None
+    # A wide array used to be refused here and transposed elsewhere; one rule
+    # now, which reads it as given and warns [DD-123].
+    return as_points(source, name=name), None
 
 
 #: Theiler window used when neither the call nor a Threshold object gives one:
@@ -82,6 +79,12 @@ def _reconcile(th, theiler, metric: str, where: str) -> int:
 
 
 def _resolve_threshold(th, coords, *, metric, theiler, rng, kw) -> Threshold:
+    with already_read():                  # the caller has warned about coords
+        return _resolve_threshold_inner(th, coords, metric=metric, theiler=theiler,
+                                        rng=rng, kw=kw)
+
+
+def _resolve_threshold_inner(th, coords, *, metric, theiler, rng, kw) -> Threshold:
     if isinstance(th, Threshold):
         return th
     if isinstance(th, (int, float)) and not isinstance(th, bool):
@@ -194,11 +197,13 @@ def cross_recurrence_plot(source1, source2, threshold=None, *,
     if isinstance(threshold, Threshold):
         th = threshold
     elif isinstance(threshold, (int, float)) and not isinstance(threshold, bool):
-        th = _cross_threshold(X1, X2, mode="fixed", value=float(threshold),
-                              metric=metric, rng=rng)
+        with already_read():
+            th = _cross_threshold(X1, X2, mode="fixed", value=float(threshold),
+                                  metric=metric, rng=rng)
     else:
-        th = _cross_threshold(X1, X2, mode=threshold or "target_rr", metric=metric,
-                              rng=rng, **threshold_kwargs)
+        with already_read():
+            th = _cross_threshold(X1, X2, mode=threshold or "target_rr",
+                                  metric=metric, rng=rng, **threshold_kwargs)
 
     p = plan(X1.shape[0], X2.shape[0], X1.shape[1], dtype=dtype, budget_gb=budget_gb,
              tile_size=tile_size, store=store, estimated_rr=th.achieved_rr)

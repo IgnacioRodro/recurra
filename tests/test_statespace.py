@@ -486,3 +486,69 @@ def test_an_estimate_at_the_edge_of_its_range_warns():
     noise = np.random.default_rng(0).standard_normal(3000)
     with pytest.warns(rc.ParameterWarning, match="never fell"):
         sm.estimate_m(noise, 1, method="fnn", m_range=(1, 3), rng=0)
+
+
+# ------------------------------------------- DD-123: one rule for raw arrays
+
+def _orientation_warnings(fn):
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        out = fn()
+    return out, [w for w in caught if "DD-123" in str(w.message)]
+
+
+def test_a_wide_array_is_read_as_given_everywhere():
+    """DD-123: a 2-D array is (n_points, n_dimensions) in every function.
+    Before, recurrence_plot refused this array, threshold read it as 30
+    points, and estimate_tau, estimate_m, custom and the dynamical measures
+    transposed it to 40 points without a word. Each now reads 30 points of 40
+    dimensions and warns once."""
+    W = np.random.default_rng(0).standard_normal((30, 40))
+    rec = rc.ingest({"a": np.zeros(30)}, fs=10.0)
+    checks = {
+        "estimate_tau": lambda: rc.estimate_tau(W, tau_range=(1, 5))
+                                  .diagnostics["n_components"] == 40,
+        "custom": lambda: sm.custom(rec, lambda r: W).n_points == 30,
+        "threshold": lambda: rc.threshold(W, target_rr=0.1, rng=0).n_samples == 30 * 29,
+        "recurrence_plot": lambda: rc.recurrence_plot(W, target_rr=0.1, rng=0)
+                                     .matrix.shape == (30, 30),
+    }
+    for name, check in checks.items():
+        ok, warned = _orientation_warnings(check)
+        assert ok, name
+        assert len(warned) == 1, (name, [str(w.message) for w in warned])
+        assert issubclass(warned[0].category, rc.GeometryWarning)
+
+
+def test_a_one_dimensional_series_is_one_column():
+    """DD-123: a 1-D vector is a scalar series of len(x) points. threshold and
+    recurrence_plot used to read it as one point in 500 dimensions and fail,
+    and the scaling helpers to return a single row."""
+    x = np.cumsum(np.random.default_rng(1).standard_normal(500))
+    (th, rp), warned = _orientation_warnings(
+        lambda: (rc.threshold(x, target_rr=0.1, rng=0),
+                 rc.recurrence_plot(x, target_rr=0.1, rng=0)))
+    assert not warned
+    assert th.achieved_rr == pytest.approx(0.1, abs=0.005)
+    assert rp.matrix.shape == (500, 500)
+    assert rc.scale_array(x).shape == (500, 1)
+    assert rc.rms_pairwise_distance(x, rng=0) > 0
+
+
+def test_npy_channels_first_guess_is_announced(tmp_path):
+    """DD-123, P3: reading a short wide .npy file as channels-first is a guess
+    on the caller's behalf, so it warns and is recorded."""
+    path = tmp_path / "eeg.npy"
+    np.save(path, np.random.default_rng(2).standard_normal((4, 1000)))
+    from recurra.io.readers import read_npy
+
+    with pytest.warns(rc.CaveatWarning, match="channels-first"):
+        channels, _, _, meta = read_npy(path)
+    assert len(channels) == 4 and meta["transposed"] == "channels-first"
+
+
+def test_other_shapes_are_refused():
+    with pytest.raises(rc.ParameterError, match="1-D series or a 2-D array"):
+        rc.threshold(np.zeros((4, 5, 6)), target_rr=0.1, rng=0)

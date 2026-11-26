@@ -264,6 +264,9 @@ def rqa(source, *, l_min: int = 8, v_min: int = 8, w_min: int = 2,
                              **kwargs)
     if hist is None:
         hist = line_histogram(rm, tile_size=tile_size)
+        if getattr(rm, "_rr", None) is None:
+            # counted over the same region: a later rm.recurrence_rate() is free
+            rm._rr = hist.recurrence_rate                               # [DD-124]
 
     values = rqa_from_histogram(hist, l_min=l_min, v_min=v_min, w_min=w_min,
                                 denominator=denominator, metrics=metrics)

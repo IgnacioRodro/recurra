@@ -46,6 +46,7 @@ from typing import Literal
 import numpy as np
 
 from ..config import SeedLike, resolve_rng
+from ..core.points import as_points
 from ..exceptions import ParameterError
 
 ScalingPolicy = Literal[
@@ -65,7 +66,7 @@ def rms_pairwise_distance(X: np.ndarray, *, max_samples: int = 20000,
     with independent columns this equals sqrt(2 * sum_k var_k), which is the
     quantity the balancing policies equalise.
     """
-    X = np.atleast_2d(np.asarray(X, dtype=float))
+    X = as_points(X, name="scaling", warn=False)    # [DD-123]
     if X.shape[0] < 2:
         return 0.0
     rng = resolve_rng(rng)
@@ -81,7 +82,7 @@ def rms_pairwise_distance(X: np.ndarray, *, max_samples: int = 20000,
 
 def theoretical_rms_pairwise(X: np.ndarray) -> float:
     """Closed form: sqrt(2 * sum of column variances). No sampling needed."""
-    X = np.atleast_2d(np.asarray(X, dtype=float))
+    X = as_points(X, name="scaling", warn=False)    # [DD-123]
     return float(np.sqrt(2.0 * np.sum(np.var(X, axis=0))))
 
 
@@ -102,7 +103,7 @@ def shape_stats(X: np.ndarray, *, max_samples: int = 20000,
     from scipy.stats import skew as _skew
 
     rng = resolve_rng(rng)
-    X = np.atleast_2d(np.asarray(X, dtype=float))
+    X = as_points(X, name="scaling", warn=False)    # [DD-123]
     n = X.shape[0]
     if n < 3:
         return {"tail_ratio": np.nan, "max_ratio": np.nan, "skew": np.nan}
@@ -153,7 +154,7 @@ class ScaleReport:
 
 def scale_array(X, *, policy: str = "zscore", eps: float = 1e-12) -> np.ndarray:
     """Scale a single block of coordinates."""
-    X = np.atleast_2d(np.asarray(X, dtype=float))
+    X = as_points(X, name="scaling", warn=False)    # [DD-123]
     if policy in ("none", None):
         return X
     if policy == "zscore":

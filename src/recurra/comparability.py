@@ -219,7 +219,11 @@ def _describe_unit(obj, label: str) -> dict[str, Any]:
     d: dict[str, Any] = {"label": label}
 
     if isinstance(obj, WindowedRecurrence):
-        m = obj.metrics()
+        # Geometry and thresholds only. obj.metrics() would also walk every
+        # matrix for its recurrence rate, which nothing here reads: in a batch
+        # that was a full extra pass over every window, 44% of the time of
+        # build + RQA at 2560 points [DD-124].
+        m = obj._metrics if obj._metrics is not None else obj._layout()
         w0 = obj.windows[0]
         d.update(dim=int(m["dim"].iloc[0]), fs=float(w0.fs),
                  n_points=int(m["n_rows"].iloc[0]),

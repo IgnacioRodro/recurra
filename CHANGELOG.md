@@ -4,7 +4,69 @@ All notable changes to this project. Language policy: English throughout [DD-30]
 
 ## [0.26.0.dev0] — unreleased
 
-Development version after the 0.25.0 release. No changes yet.
+Work towards the GPU backend of DD-16: first the measurement rules a second
+engine has to agree with, then the CPU path it will mirror. Changes that alter
+results are listed first.
+
+**Changes that alter results**
+
+- **Epsilon is never an observed distance** (DD-122). A quantile very often
+  *is* a sampled distance, and the matrix then decided that pair by the last
+  bit of rounding: against `scipy`'s `cdist`, plots differed from the
+  reference in 5% to 20% of random draws at every size from 12 to 1280
+  points. Epsilon is now moved, when it lies within 1e-9 (relative) of a
+  sampled distance, to the middle of the gap around it; the pairs the sample
+  counts as recurrent do not change and ties are inside. Every draw now equals
+  the reference. Results move only where the decision was arbitrary.
+- **A small sample is the whole population** (DD-122). With fewer admissible
+  pairs than `n_samples` (below about 447 points by default), every pair is
+  taken once instead of drawing as many *with replacement*. A 12-point plot
+  asked for 0.20 got anything from 0.146 to 0.346 depending on the seed; it
+  now gets the exact quantile for every seed. Affects short windows and
+  meta-recurrence plots; cross plots likewise when `n1 * n2 <= n_samples`.
+- **FAN plots hold the neighbours they promise** (DD-122, DD-35 revised).
+  47% of the rows of a 10-neighbour plot held 9, because the k-th neighbour's
+  distance was recomputed by another formula. Every row now holds 10.
+- **`per_block` thresholds no longer depend on the block weights** (DD-35
+  revised). Each block's epsilon was estimated on the unweighted coordinates
+  while the matrix compares the weighted ones: on a phase-amplitude space the
+  phase block came out at 0.221 and the amplitude block at 0.181 for a target
+  of 0.20. Both now get 0.20; the epsilons are reported in weighted units.
+- **One rule for raw arrays** (DD-123). A 1-D vector is one column and a 2-D
+  array is always (n_points, n_dimensions), never transposed. `estimate_tau`,
+  `estimate_m`, `custom` and the dynamical measures used to transpose a wide
+  array silently; the plots refused it; `threshold` and the scaling helpers
+  read a 1-D vector as one point. A wide array now warns once
+  (`GeometryWarning`) and is used as given; 1-D input works everywhere.
+  `read_npy` keeps its channels-first reading of short wide files but
+  announces it (`CaveatWarning`) and records it.
+
+**Faster, same results**
+
+- **Line histograms by whole-array operations** (DD-124): full-width row
+  bands, every run of a band found at once, the tile carry and the white-line
+  rule of DD-56 and DD-57 applied with array masks. Identical counts to the
+  naive dense version and to the 0.25 tile version. Plot plus histograms of one
+  window: 9.6 times faster at 1280 points, 6.5 times at 10 240.
+- The matrix is walked in cache-sized bands for the histograms, the rate and
+  materialisation, and the Theiler band is cleared one strided diagonal at a
+  time (DD-124).
+- One pass per window: the comparability check of `batch_windowed_recurrence`
+  no longer computes every matrix to describe a record, and `metrics(rqa=True)`
+  and `rqa()` read the rate from the histogram (DD-124). A batch of windows
+  runs 5.5 times faster at 1280 points and 9.9 times at 10 240, on one core.
+
+**Tests and tools**
+
+- `tools/benchmark_engine.py`: windows per second for a range of window sizes
+  and core counts, written to CSV with the machine and the versions. The
+  numbers in DD-124 come from it (`docs/data/benchmarks/`).
+- New tests against external references: thresholds against `scipy`'s
+  `cdist`, band histograms against two independent implementations, band
+  clearing against the integer mask it replaced.
+- `test_the_plot_does_not_depend_on_the_number_of_blas_threads`: the plot and
+  its DET with one BLAS thread and with all of them. On a 40-core server, 1, 8
+  and 38 threads gave the same matrix and the same DET (recorded in DD-33).
 
 ## [0.25.0] — 2026-11-26
 

@@ -132,3 +132,112 @@ def test_cross_threshold_hits_target(ss_pac):
     other = sm.channels.__wrapped__ if False else np.asarray(ss_pac.weighted_coords)
     th = cross_threshold(ss_pac, other + 0.05, target_rr=0.05, rng=0)
     assert th.achieved_rr == pytest.approx(0.05, abs=0.01)
+
+
+# --------------------------------------------------------- DD-122: ties
+# The reference is scipy's cdist: the matrix must hold exactly the pairs whose
+# true distance is <= epsilon, with no pair left for rounding to decide.
+
+def _reference(X, eps, theiler):
+    from scipy.spatial.distance import cdist
+
+    n = X.shape[0]
+    D = cdist(X, X)
+    band = np.abs(np.subtract.outer(np.arange(n), np.arange(n))) >= theiler
+    return D, band, (D <= eps) & band
+
+
+@pytest.mark.parametrize("n,theiler", [(12, 2), (40, 0), (300, 1), (1157, 1)])
+def test_epsilon_is_never_an_observed_distance(n, theiler):
+    """DD-122: epsilon is kept off every distance the data contain, so the
+    plot equals the reference whatever formula computes the distances. Before,
+    it differed from cdist in 5 to 20% of the draws at every size."""
+    from recurra.threshold.estimate import TIE_RTOL
+
+    for seed in range(4):
+        X = np.random.default_rng(seed).standard_normal((n, 3)) + 3.0
+        th = threshold(X, target_rr=0.05, theiler=theiler, rng=seed)
+        eps = float(th.value)
+        D, band, ref = _reference(X, eps, theiler)
+        if n * n <= 200_000:
+            # every pair was in the sample, so none may sit at epsilon
+            assert np.min(np.abs(D[band] - eps)) > TIE_RTOL * eps
+        M = rc.recurrence_plot(X, th, store="memory").matrix
+        assert np.array_equal(M, ref), f"n={n}, seed={seed}"
+
+
+def test_small_matrices_take_every_pair_once():
+    """DD-122: with fewer admissible pairs than samples the quantile is the
+    exact one, the same for every seed. Sampled with replacement, a 12-point
+    plot asked for 0.20 got anything from 0.15 to 0.35."""
+    X = np.random.default_rng(3).standard_normal((12, 3))
+    rates = set()
+    for seed in range(10):
+        th = threshold(X, target_rr=0.2, theiler=2, rng=seed)
+        _, band, ref = _reference(X, float(th.value), 2)
+        assert th.achieved_rr == pytest.approx(ref[band].mean(), abs=1e-15)
+        rates.add(round(th.achieved_rr, 12))
+    assert len(rates) == 1
+    assert rates.pop() == pytest.approx(0.2, abs=1 / 110)   # one pair of 55
+
+
+def test_ties_are_inside():
+    """DD-122: on quantised data many pairs share the distance the quantile
+    lands on; all of them are recurrent, none is left to rounding."""
+    X = np.random.default_rng(5).integers(0, 4, size=(60, 3)).astype(float)
+    th = threshold(X, target_rr=0.1, theiler=1, rng=0)
+    eps = float(th.value)
+    D, band, ref = _reference(X, eps, 1)
+    tied = D[band][np.abs(D[band] - np.max(D[band][D[band] <= eps])) == 0]
+    assert tied.size > 2 and np.all(tied < eps)
+    M = rc.recurrence_plot(X, th, store="memory").matrix
+    assert np.array_equal(M, ref)
+
+
+def test_fan_rows_hold_exactly_n_neighbours():
+    """DD-122: the FAN epsilon of a point was the distance to its n-th
+    neighbour, which the matrix then recomputed with another formula; 47% of
+    the rows held n - 1 recurrences. It now lies between the n-th neighbour
+    and the next one."""
+    X = np.random.default_rng(1).standard_normal((400, 3)) + 3.0
+    th = threshold(X, mode="fan", n_neighbors=10, theiler=1, rng=0)
+    M = rc.recurrence_plot(X, th, store="memory").matrix
+    assert np.all(M.sum(axis=1) == 10)
+
+
+def test_small_cross_thresholds_are_exact():
+    """DD-122 for cross plots: a small one takes every pair once, so epsilon
+    does not depend on the seed, and it stays off every cross distance."""
+    from scipy.spatial.distance import cdist
+
+    from recurra.threshold.estimate import TIE_RTOL
+
+    g = np.random.default_rng(2)
+    X, Y = g.standard_normal((10, 2)), g.standard_normal((14, 2))
+    eps = {float(cross_threshold(X, Y, target_rr=0.2, rng=s).value) for s in range(5)}
+    assert len(eps) == 1
+    e = eps.pop()
+    assert np.min(np.abs(cdist(X, Y) - e)) > TIE_RTOL * e
+    crp = rc.cross_recurrence_plot(X, Y, target_rr=0.2, rng=0).matrix
+    assert np.array_equal(crp, cdist(X, Y) <= e)
+
+
+def test_per_block_rates_do_not_depend_on_the_weights(ss_pac):
+    """DD-35, revised in 0.26: each block's epsilon is estimated on the
+    coordinates the matrix compares, so every block sees the rate it was
+    given. Estimated on the unweighted coordinates, the block weights leaked
+    back in: 0.221 for the phase block and 0.181 for the amplitude block, for
+    a target of 0.2."""
+    from scipy.spatial.distance import cdist
+
+    ss = ss_pac.subsample(max_points=300)
+    th = threshold(ss, mode="per_block", target_rr=0.2, rng=0)
+    W = np.asarray(ss.weighted_coords)
+    n = W.shape[0]
+    band = np.abs(np.subtract.outer(np.arange(n), np.arange(n))) >= 1
+    joint = band.copy()
+    for g, eps in zip(ss.groups, th.per_block, strict=True):
+        block = (cdist(W[:, g.slice], W[:, g.slice]) <= eps) & band
+        assert block[band].mean() == pytest.approx(0.2, abs=1e-3), g.label
+        joint &= block
+    assert np.array_equal(rc.recurrence_plot(ss, th, store="memory").matrix, joint)

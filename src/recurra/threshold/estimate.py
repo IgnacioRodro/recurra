@@ -13,12 +13,32 @@ paper should report is the *achieved* rate, which is what
 samples until the achieved rate is within tolerance of the target. The plain
 quantile is exact for the sample it saw but biased for the population; the
 refinement removes most of that bias at the cost of a few more samples.
+
+Design note (DD-122) -- epsilon is never an observed distance.
+
+A quantile of a sample very often *is* one of the sampled distances: a
+symmetric matrix holds every distance twice, and a sample drawn with
+replacement repeats pairs. In the FAN mode epsilon is a neighbour's distance by
+definition. The matrix then compares that same pair against epsilon with a
+distance computed by another formula (the norm expansion of DD-33, on centred
+coordinates), so whether the pair counts as recurrent is decided by the last
+bit of rounding: 47% of the rows of a FAN plot with 10 neighbours had 9. And a
+second engine with its own rounding could decide differently.
+
+So once epsilon is chosen it is moved, when it lies within a relative
+``TIE_RTOL`` of a sampled distance, to the middle of the gap between the
+sampled distances on either side of it. The pairs the sample counts as
+recurrent do not change -- a distance equal to epsilon stays inside, ties
+included -- but none is left within rounding distance of the decision. In FAN
+mode the gap is the one between the ``n_neighbors``-th neighbour and the next
+distinct one.
 """
 from __future__ import annotations
 
 import numpy as np
 
 from ..config import SeedLike, resolve_rng
+from ..core.points import as_points
 from ..exceptions import ParameterError
 from .core import Threshold
 from .sampling import sample_cross_distances, sample_pair_distances
@@ -28,16 +48,56 @@ MODES = ("fixed", "target_rr", "percentile", "fan", "std_fraction",
 SCOPES = ("global", "per_record", "per_window", "per_block")
 BISECT_METHODS = ("quantile", "bisect")
 
+#: An epsilon closer than this, relative to its value, to a sampled distance
+#: is moved off it [DD-122]. Far above the rounding error of any distance
+#: formula in double precision (about 1e-14 relative), far below the gap
+#: between neighbouring sampled distances.
+TIE_RTOL = 1e-9
 
-def _coords(source):
+
+def _coords(source, warn: bool = True):
     """Accept a StateSpace or a raw array; always use the weighted geometry."""
     if hasattr(source, "weighted_coords"):
         return np.asarray(source.weighted_coords, dtype=float), source
-    return np.atleast_2d(np.asarray(source, dtype=float)), None
+    return as_points(source, name="threshold", warn=warn), None   # [DD-123]
 
 
 def _rate_at(dists: np.ndarray, eps: float) -> float:
     return float(np.mean(dists <= eps)) if dists.size else float("nan")
+
+
+def _gap_midpoint(lower: float, upper: float | None) -> float:
+    """A value strictly between two distances, or just above the last one."""
+    if upper is not None and upper > lower:
+        return 0.5 * (lower + upper)
+    # Nothing above: any value a little larger keeps every distance inside.
+    return lower * (1.0 + 1e-6) if lower > 0 else float(np.finfo(float).tiny)
+
+
+def off_the_sample(eps: float, dists: np.ndarray) -> tuple[float, bool]:
+    """Move ``eps`` off the sampled distances, keeping the same pairs inside.
+
+    Returns ``(epsilon, moved)``. If ``eps`` is within a relative
+    ``TIE_RTOL`` of a sampled distance it becomes the midpoint of the gap that
+    contains it: every distance ``<= eps`` stays inside (ties included) and
+    every larger one stays outside, but none is within rounding of the
+    decision any more [DD-122].
+    """
+    if not dists.size or not np.isfinite(eps):
+        return float(eps), False
+    s = np.sort(np.asarray(dists, dtype=float))
+    k = int(np.searchsorted(s, eps, side="right"))      # s[:k] <= eps < s[k:]
+    tol = TIE_RTOL * abs(eps)
+    near_below = k > 0 and eps - s[k - 1] <= tol
+    near_above = k < s.size and s[k] - eps <= tol
+    if not (near_below or near_above):
+        return float(eps), False
+    upper = float(s[k]) if k < s.size else None
+    if k == 0:
+        # Below every sample and within tolerance of the smallest one: put it
+        # halfway to zero, so that the smallest stays outside as before.
+        return 0.5 * float(eps), True
+    return _gap_midpoint(float(s[k - 1]), upper), True
 
 
 def threshold(source, *, mode: str = "target_rr", target_rr: float = 0.05,
@@ -83,7 +143,7 @@ def threshold(source, *, mode: str = "target_rr", target_rr: float = 0.05,
     # repeats and a target of 0.02, epsilon was 4.7e-14 and the diagonal
     # densities differed between numpy 1.24 and 2.4.
     if mode != "fixed" and not th.is_pointwise and not th.is_per_block:
-        X, _ = _coords(source)
+        X, _ = _coords(source, warn=False)          # already warned above
         extent = float(np.max(np.ptp(X, axis=0))) if X.size else 0.0
         eps = float(th.scalar)
         if extent > 0 and np.isfinite(eps) and eps <= 1e-9 * extent:
@@ -175,13 +235,24 @@ def _threshold(source, *, mode: str = "target_rr", target_rr: float = 0.05,
         # A point is never its own neighbour, whatever the window [DD-115]:
         # neighbours need |i - j| >= max(theiler, 1).
         gap = max(int(theiler), 1)
-        k = int(min(n_neighbors + 2 * gap, n))
+        # A few neighbours beyond the n-th, to find the next distinct distance
+        # epsilon is moved towards [DD-122].
+        k = int(min(n_neighbors + 2 * gap + 8, n))
         dist, idx = cKDTree(X).query(X, k=k)
         eps = np.empty(n)
+        counts = np.empty(n)
         for i in range(n):
             valid = dist[i][np.abs(idx[i] - i) >= gap]
-            eps[i] = valid[min(n_neighbors, valid.size) - 1] if valid.size else 0.0
-        achieved = float(n_neighbors / max(n - (2 * gap - 1), 1))
+            if not valid.size:
+                eps[i], counts[i] = 0.0, 0
+                continue
+            nth = float(valid[min(n_neighbors, valid.size) - 1])
+            above = valid[valid > nth]
+            eps[i] = _gap_midpoint(nth, float(above[0]) if above.size else None)
+            counts[i] = int(np.sum(valid <= nth))
+        # Ties with the n-th neighbour are inside, so a row can hold more than
+        # n_neighbors recurrences; the rate reports what the plot will hold.
+        achieved = float(np.mean(counts) / max(n - (2 * gap - 1), 1))
         return Threshold(
             value=eps, target=achieved, achieved_rr=achieved, n_samples=n,
             diagnostics={"criterion": f"distance to neighbour #{n_neighbors}",
@@ -203,10 +274,17 @@ def _threshold(source, *, mode: str = "target_rr", target_rr: float = 0.05,
                 f"block_targets has {len(targets)} entries for {len(ss.groups)} blocks")
         eps_blocks, labels = [], []
         for g, t in zip(ss.groups, targets, strict=False):
-            Xb = np.asarray(ss.coords)[:, g.slice]
+            # The weighted coordinates, the ones the matrix compares block by
+            # block. Each block's weight is one factor on all its distances, so
+            # a quantile taken here makes the decision independent of the
+            # weights, as the mode promises. Taken on the unweighted ones it
+            # let the weights back in: phase blocks came out more recurrent
+            # than asked and amplitude blocks less [DD-35, revised in 0.26].
+            Xb = X[:, g.slice]
             d = sample_pair_distances(Xb, n_samples=n_samples, theiler=theiler,
                                       rng=rng, metric=metric)
-            eps_blocks.append(float(np.quantile(d, np.clip(t, 0, 1))) if d.size else 1.0)
+            eps_blocks.append(off_the_sample(float(np.quantile(d, np.clip(t, 0, 1))), d)[0]
+                              if d.size else 1.0)
             labels.append(g.label)
         return Threshold(
             value=float(max(eps_blocks)), per_block=tuple(eps_blocks),
@@ -238,6 +316,7 @@ def _threshold(source, *, mode: str = "target_rr", target_rr: float = 0.05,
         raise ParameterError("could not sample any admissible pair of points")
     eps = float(np.quantile(d, q))
     achieved = _rate_at(d, eps)
+    last = d                     # the sample the achieved rate is measured on
     diag = {"criterion": f"quantile {q:g} of the sampled distance distribution",
             "iterations": 0}
 
@@ -250,6 +329,7 @@ def _threshold(source, *, mode: str = "target_rr", target_rr: float = 0.05,
             check = sample_pair_distances(X, n_samples=max(20_000, n_samples // 4),
                                           theiler=theiler, rng=rng, metric=metric)
             achieved = _rate_at(check, eps)
+            last = check
             if abs(achieved - q) <= tol:
                 break
             if achieved < q:
@@ -263,6 +343,11 @@ def _threshold(source, *, mode: str = "target_rr", target_rr: float = 0.05,
         if not diag["converged"]:
             diag["warning"] = (f"did not reach the target rate in {max_iter} iterations; "
                                f"achieved {achieved:.4%} against {q:.4%}")
+
+    eps, moved = off_the_sample(eps, d)
+    if moved:
+        diag["moved_off_a_sampled_distance"] = True                   # [DD-122]
+        achieved = _rate_at(last, eps)
 
     if mode == "adaptive_dim":
         dim = X.shape[1]
@@ -305,7 +390,7 @@ def cross_threshold(source1, source2, *, mode: str = "target_rr",
     d = sample_cross_distances(X1, X2, n_samples=n_samples, rng=rng, metric=metric)
     if d.size == 0:
         raise ParameterError("could not sample any cross pair")
-    eps = float(np.quantile(d, q))
+    eps, _ = off_the_sample(float(np.quantile(d, q)), d)               # [DD-122]
     return Threshold(value=eps, target=q, achieved_rr=_rate_at(d, eps),
                      n_samples=d.size,
                      diagnostics={"criterion": f"quantile {q:g} of cross distances",

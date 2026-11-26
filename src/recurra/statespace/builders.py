@@ -26,6 +26,7 @@ from typing import Any
 import numpy as np
 
 from ..capabilities import Capability, require
+from ..core.points import as_points
 from ..exceptions import InferenceWarning, ParameterError
 from ..provenance import Step
 from .core import CoordGroup, StateSpace
@@ -492,9 +493,7 @@ def channels(rec, names: Sequence[str] | None = None, *, scaling: str = "rms_bal
 def custom(rec, fn: Callable[[Any], np.ndarray], *, labels: Sequence[str] | None = None,
            kind: str = "derived", scaling: str = "none", **kw) -> StateSpace:
     """Escape hatch: any callable Recording -> (N, K) array."""
-    X = np.atleast_2d(np.asarray(fn(rec), dtype=float))
-    if X.shape[0] < X.shape[1]:
-        X = X.T
+    X = as_points(fn(rec), name="custom")            # never transposed [DD-123]
     groups = (CoordGroup(labels[0] if labels else "custom", 0, X.shape[1], kind=kind),)
     step = Step("statespace", {"route": "external", "builder": "custom",
                                "dim": X.shape[1], "n_points": X.shape[0]},

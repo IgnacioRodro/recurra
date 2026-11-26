@@ -15,12 +15,23 @@ The old draft also concatenated subjects before sampling, which mixes
 within-subject and between-subject distances and inflates the threshold.
 Cross-record pairs are excluded here by construction: each record is
 sampled separately and the samples are pooled.
+
+Design note (DD-122) -- a sample no larger than the population is the
+population.
+
+When there are no more admissible pairs than ``n_samples``, drawing that many
+pairs *with replacement* repeats some and misses about a third of them, so a
+12-point meta-recurrence plot asked for a rate of 0.20 got anything from 0.13
+to 0.35 depending on the seed. Every admissible pair is then taken exactly
+once instead, in a fixed order and without touching the random generator: the
+quantile becomes the exact one.
 """
 from __future__ import annotations
 
 import numpy as np
 
 from ..config import SeedLike, resolve_rng
+from ..core.points import as_points
 from ..exceptions import ParameterError
 
 
@@ -34,15 +45,17 @@ def sample_pair_distances(X: np.ndarray, *, n_samples: int = 200_000,
     rejected and redrawn, so the sample matches the region over which the
     recurrence rate is defined [DD-32, DD-115]. With ``theiler=0`` nothing is
     rejected, self-pairs included, exactly as the matrix keeps its line of
-    identity.
+    identity. When there are no more admissible pairs than ``n_samples``,
+    every one is taken once instead, and ``rng`` is not used [DD-122].
     """
     from ..recurrence.distance import pairwise_rows
 
     rng = resolve_rng(rng)
-    X = np.atleast_2d(np.asarray(X, dtype=float))
+    X = as_points(X, name="sample_pair_distances", warn=False)    # [DD-123]
     n = X.shape[0]
     if n < 2:
         return np.array([], dtype=float)
+    theiler = int(theiler)
 
     # Ordered pairs (i, j) with |i - j| >= theiler. Ordered, because i and j
     # are drawn independently below.
@@ -53,7 +66,11 @@ def sample_pair_distances(X: np.ndarray, *, n_samples: int = 200_000,
         raise ParameterError(
             f"theiler={theiler} excludes every pair of a {n}-point trajectory"
         )
-    k = int(min(n_samples, max(1, n_valid)))
+    if n_valid <= n_samples:
+        # Small enough to take every admissible pair once [DD-122].
+        i, j = admissible_pairs(n, theiler)
+        return pairwise_rows(X, i, j, metric=metric)
+    k = int(n_samples)
 
     out = []
     got = 0
@@ -86,8 +103,8 @@ def sample_cross_distances(X1: np.ndarray, X2: np.ndarray, *,
     from ..recurrence.distance import pairwise_cross_rows
 
     rng = resolve_rng(rng)
-    X1 = np.atleast_2d(np.asarray(X1, dtype=float))
-    X2 = np.atleast_2d(np.asarray(X2, dtype=float))
+    X1 = as_points(X1, name="sample_cross_distances", warn=False)  # [DD-123]
+    X2 = as_points(X2, name="sample_cross_distances", warn=False)
     if X1.shape[1] != X2.shape[1]:
         raise ParameterError(
             f"cross sampling needs equal dimensionality, got {X1.shape[1]} and "
@@ -96,10 +113,27 @@ def sample_cross_distances(X1: np.ndarray, X2: np.ndarray, *,
     n1, n2 = X1.shape[0], X2.shape[0]
     if n1 < 1 or n2 < 1:
         return np.array([], dtype=float)
-    k = int(min(n_samples, n1 * n2))
+    if n1 * n2 <= n_samples:
+        # Every pair once, as for a single trajectory [DD-122].
+        i, j = np.divmod(np.arange(n1 * n2, dtype=np.int64), n2)
+        return pairwise_cross_rows(X1, X2, i, j, metric=metric)
+    k = int(n_samples)
     i = rng.integers(0, n1, size=k)
     j = rng.integers(0, n2, size=k)
     return pairwise_cross_rows(X1, X2, i, j, metric=metric)
+
+
+def admissible_pairs(n: int, theiler: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    """Every ordered pair ``(i, j)`` of ``n`` points with ``|i - j| >= theiler``.
+
+    Row-major order, so the result is the same on every call. With
+    ``theiler=0`` the self-pairs are included, as the matrix keeps them
+    [DD-115]. Used when the admissible pairs are few enough to take them all
+    instead of sampling [DD-122].
+    """
+    i, j = np.divmod(np.arange(n * n, dtype=np.int64), n)
+    keep = np.abs(i - j) >= int(theiler)
+    return i[keep], j[keep]
 
 
 def subsample_points(n: int, max_points: int, rng: SeedLike = None) -> np.ndarray:

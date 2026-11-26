@@ -31,6 +31,7 @@ import pandas as pd
 from scipy.spatial import cKDTree
 
 from ..config import SeedLike, resolve_rng
+from ..core.points import as_points
 from ..exceptions import ParameterError, ParameterWarning
 
 TauMethod = Literal["ami", "acf", "first_zero"]
@@ -114,9 +115,7 @@ def estimate_tau(X, *, method: TauMethod = "ami", tau_range=(1, 200),
     ``first_zero`` the first zero crossing of the autocorrelation.
     Multivariate input is averaged across columns.
     """
-    X = np.atleast_2d(np.asarray(X, dtype=float))
-    if X.shape[0] < X.shape[1]:
-        X = X.T
+    X = as_points(X, name="estimate_tau")            # never transposed [DD-123]
     n, d = X.shape
     lo, hi = max(1, int(tau_range[0])), int(min(tau_range[1], n // 3))
     if hi < lo:
@@ -173,9 +172,7 @@ def estimate_tau(X, *, method: TauMethod = "ami", tau_range=(1, 200),
 # ----------------------------------------------------------------------- m
 def _embed(X: np.ndarray, m: int, tau: int) -> np.ndarray:
     """Multivariate delay embedding: (N, D) -> (N_eff, m*D)."""
-    X = np.atleast_2d(X)
-    if X.shape[0] < X.shape[1]:
-        X = X.T
+    X = as_points(X, name="delay embedding")         # never transposed [DD-123]
     n, d = X.shape
     n_eff = n - (m - 1) * tau
     if n_eff <= 2:

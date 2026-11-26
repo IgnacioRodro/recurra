@@ -37,6 +37,32 @@ too, but by the data rather than by a choice, and dropping them would bias the
 distribution against long recurrence times, which are exactly the ones a
 recurrence-time entropy is sensitive to. The asymmetry is deliberate and worth
 knowing when reading RTE.
+
+Design note (DD-124) -- whole-array operations, not a loop per line.
+
+Up to 0.25 each tile was scanned with one Python call per diagonal and per
+column. At 2560 points that was 12 767 calls and 0.54 s per plot, of which the
+distances took 0.048 s: the interpreter, not the arithmetic, set the cost.
+``line_histogram`` now visits the matrix in *row bands of full width* and finds
+every run of a band at once, with array operations:
+
+* a band is transposed so that each column is a row of the array, padded with
+  zeros, and differenced: +1 marks where a run starts and -1 where it ends;
+* diagonals are sheared into columns first (row ``r`` shifted by ``h - 1 - r``),
+  and then treated exactly like columns;
+* the carry of DD-56 becomes one array per kind of line: the run each column
+  or diagonal leaves open at the bottom of a band is added to the run that
+  starts at the top of the next, or emitted if none does;
+* the Theiler band is a third cell state for white lines. A white run is
+  dropped when the cell just before or just after it is excluded, which is the
+  rule of DD-57, and since the band is known analytically (``|i - j| <
+  theiler``) that cell can be tested even when it lies in another band. A run
+  open at a band edge carries its flag with it.
+
+Lengths are counted with ``np.bincount`` into integer histograms, so the
+result is exact and identical, count for count, to the tile-by-tile version
+(kept as ``_line_histogram_tiles``) and to the naive ``line_histogram_dense``,
+for any band height.
 """
 from __future__ import annotations
 
@@ -46,7 +72,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from ..recurrence.core import theiler_band_cells
+from ..recurrence.core import band_rows, theiler_band_cells
 
 
 def _runs(a: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -164,11 +190,11 @@ def _to_histogram(lengths: list, size: int) -> np.ndarray:
     return h
 
 
-def line_histogram(rm, *, tile_size: int | None = None) -> LineHistogram:
-    """Accumulate the three line-length distributions by streaming tiles.
+def _line_histogram_tiles(rm, *, tile_size: int | None = None) -> LineHistogram:
+    """The 0.25 implementation: square tiles, one Python call per line.
 
-    Exact: the result is identical to what the dense matrix would give, for
-    any tile size [DD-56].
+    Kept as a second reference for :func:`line_histogram`, which must agree
+    with it count for count [DD-124]. Exact for any tile size [DD-56].
     """
     n, m = rm.shape
     theiler = rm.theiler
@@ -264,6 +290,153 @@ def line_histogram(rm, *, tile_size: int | None = None) -> LineHistogram:
         recurrent_points=recurrent, considered_points=considered,
         n_rows=n, n_cols=m, theiler=theiler,
         diagnostics={"tile_size": ts, "symmetric": bool(rm.is_symmetric)},
+    )
+
+
+def _runs_by_row(X: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Every run of True along the rows of a 2-D boolean array, at once.
+
+    Returns ``(row, start, end)``, sorted by row and then by start, with
+    ``end`` exclusive. Each row is padded with a zero at both ends, so every
+    start has its end in the same row and the two lists pair up in order.
+    """
+    n_lines, h = X.shape
+    P = np.zeros((n_lines, h + 2), dtype=np.int8)
+    P[:, 1:-1] = X
+    d = np.diff(P, axis=1).ravel()
+    s = np.flatnonzero(d == 1)
+    e = np.flatnonzero(d == -1)
+    row = s // (h + 1)
+    return row, s - row * (h + 1), e - row * (h + 1)
+
+
+def _carry_runs(X: np.ndarray, keys: np.ndarray, open_len: np.ndarray,
+                counts: np.ndarray) -> None:
+    """Runs of one band, joined to the runs the previous band left open.
+
+    ``X[k]`` holds the cells of line ``keys[k]`` in this band, in order.
+    ``open_len`` is indexed by key and updated in place; completed lengths are
+    added to ``counts`` [DD-56, DD-124].
+    """
+    h = X.shape[1]
+    row, start, end = _runs_by_row(X)
+    length = end - start
+    carried = open_len[keys]
+    top = start == 0
+    length[top] += carried[row[top]]
+    continued = np.zeros(X.shape[0], dtype=bool)
+    continued[row[top]] = True
+    bottom = end == h
+    _count(counts, length[~bottom])
+    _count(counts, carried[(carried > 0) & ~continued])     # closed at the edge
+    still_open = np.zeros(X.shape[0], dtype=np.int64)
+    still_open[row[bottom]] = length[bottom]
+    open_len[keys] = still_open
+
+
+def _count(counts: np.ndarray, lengths: np.ndarray) -> None:
+    if lengths.size:
+        counts += np.bincount(lengths, minlength=counts.size)[:counts.size]
+
+
+
+
+def line_histogram(rm, *, tile_size: int | None = None) -> LineHistogram:
+    """Accumulate the three line-length distributions, band by band.
+
+    Exact: identical, count for count, to what the dense matrix would give,
+    for any band height [DD-56, DD-124]. A band holds as many cells as one
+    square tile of ``tile_size`` (default: the matrix's own), so the memory
+    used is the same as before. A materialised matrix is read rather than
+    recomputed.
+    """
+    n, m = rm.shape
+    theiler = int(rm.theiler)
+    banded = theiler > 0 and rm.coords2 is None      # the band exists [DD-57]
+    size = max(n, m)
+    ts = int(tile_size or rm.tile_size)
+    h_max = band_rows(n, m, ts)
+    stored = getattr(rm, "_matrix", None)
+
+    diag = np.zeros(size + 1, dtype=np.int64)
+    vert = np.zeros(size + 1, dtype=np.int64)
+    white = np.zeros(size + 1, dtype=np.int64)
+    diag_open = np.zeros(n + m + 1, dtype=np.int64)          # keyed by k + n
+    vert_open = np.zeros(m, dtype=np.int64)
+    white_open = np.zeros(m, dtype=np.int64)
+    white_flag = np.zeros(m, dtype=bool)     # the open white run touched the band
+    columns = np.arange(m, dtype=np.int64)
+    recurrent = 0
+
+    def excluded(rows: np.ndarray, cols: np.ndarray) -> np.ndarray:
+        """Is cell (row, col) in the Theiler band? Outside the matrix: no."""
+        if not banded:
+            return np.zeros(rows.shape, dtype=bool)
+        return (rows >= 0) & (rows < n) & (np.abs(rows - cols) < theiler)
+
+    for i0 in range(0, n, h_max):
+        i1 = min(i0 + h_max, n)
+        h = i1 - i0
+        B = (np.asarray(stored[i0:i1]) if stored is not None
+             else rm._block(i0, i1, 0, m)).astype(bool, copy=False)
+        recurrent += int(np.count_nonzero(B))
+
+        # ---- verticals: each column is a line
+        BT = np.ascontiguousarray(B.T)
+        _carry_runs(BT, columns, vert_open, vert)
+
+        # ---- diagonals: shear so that diagonal k becomes column k + h-1 - i0
+        S = np.zeros((h, m + h - 1), dtype=bool)
+        for r in range(h):
+            S[r, h - 1 - r:h - 1 - r + m] = B[r]
+        keys = np.arange(m + h - 1, dtype=np.int64) - (h - 1) - i0 + n
+        _carry_runs(np.ascontiguousarray(S.T), keys, diag_open, diag)
+
+        # ---- white verticals, with the Theiler band as a third state [DD-57]
+        W = ~BT                                        # (m, h): column, row
+        if banded:
+            for c in range(max(0, i0 - theiler + 1), min(m, i1 + theiler - 1)):
+                lo, hi = max(c - theiler + 1, i0), min(c + theiler, i1)
+                if lo < hi:
+                    W[c, lo - i0:hi - i0] = False
+        col, start, end = _runs_by_row(W)
+        length = end - start
+        carried = white_open[col]
+        top = start == 0
+        joined = top & (carried > 0)
+        length[joined] += carried[joined]
+        flag = np.where(joined, white_flag[col],
+                        excluded(i0 + start - 1, col))
+        bottom = end == h
+        ends_here = ~bottom
+        flag_end = flag | excluded(i0 + end, col)
+        _count(white, length[ends_here & ~flag_end])
+        # open runs from above that stop at this band's first row
+        continued = np.zeros(m, dtype=bool)
+        continued[col[joined]] = True
+        stopped = (white_open > 0) & ~continued
+        if stopped.any():
+            c_stop = columns[stopped]
+            bad = white_flag[stopped] | excluded(np.full(c_stop.size, i0), c_stop)
+            _count(white, white_open[stopped][~bad])
+        white_open[:] = 0
+        white_flag[:] = False
+        white_open[col[bottom]] = length[bottom]
+        white_flag[col[bottom]] = flag[bottom]
+
+    # flush what is still open at the end of the matrix: runs reaching the end
+    # of the record are kept [DD-57]
+    _count(diag, diag_open[diag_open > 0])
+    _count(vert, vert_open[vert_open > 0])
+    _count(white, white_open[(white_open > 0) & ~white_flag])
+
+    considered = n * m - (theiler_band_cells(n, m, theiler) if rm.coords2 is None else 0)
+    return LineHistogram(
+        diagonal=diag, vertical=vert, white_vertical=white,
+        recurrent_points=recurrent, considered_points=considered,
+        n_rows=n, n_cols=m, theiler=theiler,
+        diagnostics={"tile_size": ts, "band_rows": h_max,
+                     "symmetric": bool(rm.is_symmetric)},
     )
 
 

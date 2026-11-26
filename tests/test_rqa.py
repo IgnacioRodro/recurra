@@ -4,7 +4,12 @@ import pytest
 
 import recurra as rc
 from recurra import statespace as sm
-from recurra.rqa.histogram import _accumulate, line_histogram, line_histogram_dense
+from recurra.rqa.histogram import (
+    _accumulate,
+    _line_histogram_tiles,
+    line_histogram,
+    line_histogram_dense,
+)
 from recurra.rqa.metrics import METRIC_NAMES, diagonal_profile, rqa_from_histogram
 
 
@@ -31,14 +36,69 @@ def test_run_carry(segment, open_in, expected_out, expected_open):
 @pytest.mark.parametrize("theiler", [0, 1, 3])
 @pytest.mark.parametrize("tile", [7, 16, 1024])
 def test_streaming_histogram_equals_dense(n, theiler, tile):
-    """The whole long-signal strategy rests on this being exact [DD-56]."""
+    """The whole long-signal strategy rests on this being exact [DD-56]. The
+    plot is streamed, so the histogram is built from recomputed bands, and
+    only then materialised for the reference."""
     X = np.random.default_rng(0).standard_normal((n, 3))
-    rm = rc.recurrence_plot(X, target_rr=0.15, theiler=theiler, rng=0)
-    ref = line_histogram_dense(rm.matrix, theiler=theiler)
+    rm = rc.recurrence_plot(X, target_rr=0.15, theiler=theiler, store="stream", rng=0)
     got = line_histogram(rm, tile_size=tile)
+    ref = line_histogram_dense(rm.matrix, theiler=theiler)
     for kind in ("diagonal", "vertical", "white_vertical"):
         np.testing.assert_array_equal(getattr(got, kind), getattr(ref, kind),
                                       err_msg=f"{kind} differs at tile={tile}")
+
+
+# ------------------------------------------- band histograms [DD-124]
+def _assert_same_histogram(got, ref, where):
+    for kind in ("diagonal", "vertical", "white_vertical"):
+        np.testing.assert_array_equal(getattr(got, kind), getattr(ref, kind),
+                                      err_msg=f"{kind} differs: {where}")
+    assert got.recurrent_points == ref.recurrent_points, where
+    assert got.considered_points == ref.considered_points, where
+
+
+@pytest.mark.parametrize("n", [37, 211, 1157])
+@pytest.mark.parametrize("theiler", [0, 1, 2, 5])
+def test_band_histogram_equals_both_references(n, theiler):
+    """DD-124: the band version must agree count for count with the naive
+    dense reference and with the 0.25 tile version, for band heights from one
+    row to the whole matrix, streamed or stored, on an odd size (1157) whose
+    bands never divide it evenly."""
+    X = np.random.default_rng(n + theiler).standard_normal((n, 3)) + 3.0
+    rm = rc.recurrence_plot(X, target_rr=0.15, theiler=theiler, store="stream", rng=0)
+    streamed = {}
+    for tile in (3, 16, 50, 1024):
+        streamed[tile] = line_histogram(rm, tile_size=tile)
+        if n <= 211:
+            _assert_same_histogram(streamed[tile], _line_histogram_tiles(rm, tile_size=tile),
+                                   f"n={n}, theiler={theiler}, tile={tile} vs tiles")
+    ref = line_histogram_dense(rm.matrix, theiler=theiler)
+    for tile, got in streamed.items():
+        _assert_same_histogram(got, ref, f"n={n}, theiler={theiler}, tile={tile}")
+    _assert_same_histogram(line_histogram(rm, tile_size=7), ref, "read from the stored matrix")
+
+
+@pytest.mark.parametrize("tile", [3, 16, 1024])
+def test_band_histogram_on_cross_joint_and_fan_plots(tile):
+    """DD-124 on the other structures: rectangular cross plots in both
+    orientations (no Theiler band), a joint plot (AND of two parts) and an
+    asymmetric FAN plot, which keeps its band but not its symmetry."""
+    g = np.random.default_rng(4)
+    X, Y = g.standard_normal((150, 3)), g.standard_normal((97, 3))
+    cases = {
+        "crp tall": rc.cross_recurrence_plot(X, Y, target_rr=0.15, store="stream", rng=0),
+        "crp wide": rc.cross_recurrence_plot(Y, X, target_rr=0.15, store="stream", rng=0),
+        "jrp": rc.joint_recurrence_plot([X[:, :2], X[:, 2:]], target_rr=0.3, theiler=2,
+                                        store="stream", rng=0),
+        "fan": rc.recurrence_plot(X, rc.threshold(X, mode="fan", n_neighbors=8,
+                                                  theiler=2, rng=0), store="stream"),
+    }
+    for name, rm in cases.items():
+        got = line_histogram(rm, tile_size=tile)
+        _assert_same_histogram(got, _line_histogram_tiles(rm, tile_size=tile), f"{name} vs tiles")
+        ref = line_histogram_dense(rm.matrix, theiler=rm.theiler,
+                                   symmetric_source=rm.coords2 is None)
+        _assert_same_histogram(got, ref, f"{name}, tile={tile}")
 
 
 def test_histogram_rate_matches_the_matrix():
