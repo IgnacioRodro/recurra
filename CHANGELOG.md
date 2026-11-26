@@ -2,6 +2,12 @@
 
 All notable changes to this project. Language policy: English throughout [DD-30].
 
+## [0.27.0.dev0] — unreleased
+
+Development after 0.26.0. Planned: cross and joint recurrence plots, FAN and
+per-block thresholds and the thresholds of `windowed_recurrence` on the GPU;
+two GPUs from one call; the user guide.
+
 ## [0.26.0] — 2026-11-26
 
 The GPU engine. With a CUDA device and PyTorch, the RQA of many windows runs
