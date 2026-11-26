@@ -13,16 +13,18 @@ comparing with. Changes that alter results are listed first.
 - `batch_rqa(windows, ...)`: the RQA of many windows in one call, one row per
   window, each equal to the single-plot path with the same integer seed.
 - `engine="auto"` (the default of `batch_rqa` and of `metrics()`) runs on the
-  first CUDA device when PyTorch sees one and the windows have at least 512
-  points, and on the CPU otherwise; with a device present the choice is
+  first CUDA device when PyTorch sees one and the windows have at least 128
+  points (the GPU was measured faster at every size from there up), and on
+  the CPU otherwise; with a device present the choice is
   announced once and always recorded in the provenance. `engine="torch"`
   insists on the device and fails rather than fall back; `engine="numpy"` is
   the reference.
 - The same answer by construction: thresholds bit for bit (the device sorts,
   numpy does the deciding arithmetic), histograms count for count (integer
   counts only, no matrix products, TF32 off and recorded), whatever the batch
-  size, band height or device. Precisions `double` (default), `single` and
-  `mixed` (single, with the cells near epsilon recomputed in double).
+  size, band height or device. Precisions `mixed` (the default: single, with
+  the cells near epsilon recomputed in double, so the numbers of `double`,
+  faster), `double` and `single`.
 - New `gpu` extra (PyTorch), `Config.gpu_memory_budget_gb`, `recurra doctor`
   reports the CUDA devices, the choice of `auto` and the physical cores.
   Installation and GPU tests: `docs/INSTALL.md`, sections 10 and 11.

@@ -5045,8 +5045,8 @@ there and the CPU, at its best, when it is not.
    `WindowedRecurrence.metrics()` take `engine` and `device`.
 2. **`engine="auto"` is the default** and picks the torch engine on the first
    CUDA device when PyTorch sees one and the windows have at least
-   `AUTO_MIN_POINTS` points (512, provisional until measured on the GPU), and
-   the numpy engine otherwise. When a device exists the choice is announced
+   `AUTO_MIN_POINTS` points (128, the shortest size at which the GPU was
+   measured to win), and the numpy engine otherwise. When a device exists the choice is announced
    once with a `CaveatWarning`, whichever way it went; it is always recorded
    in the provenance of the table. A machine without a GPU gets the reference
    engine without a word, since nothing was chosen on its behalf.
@@ -5080,9 +5080,11 @@ there and the CPU, at its best, when it is not.
      differences, `nonzero`, integer `bincount`. No floating-point reduction
      and no float atomics, so counts cannot depend on scheduling, batch size,
      band height or device.
-5. **Precision.** `double` is the default, as on the CPU. `single` decides in
-   float32 and counts the cells near epsilon; `mixed` recomputes exactly
-   those in float64, which restores the double decision. "Near" is a band
+5. **Precision.** `mixed` is the default on the device: it decides in
+   float32 and recomputes in float64 every cell near epsilon, which restores
+   the double decision, so it gives the numbers of `double` (and of the CPU)
+   faster. `double` decides in float64 throughout; `single` decides in
+   float32 only and can differ from the reference next to epsilon. "Near" is a band
    per window, `max(1e-4, 16 u d (2 R/eps + 1))` relative to epsilon, with
    `u = 2^-24`, `d` the dimension and `R` the largest centred coordinate:
    rounding the coordinates to float32 cannot move a distance by more than
@@ -5137,8 +5139,24 @@ device memory stayed under the 8 GB budget (about 5.3 GB in double, 3.5 GB
 in mixed), so the planning constants were tightened to what was measured
 plus a margin. For the long-term study above, mixed on both cards brings a
 pair of bands to about 10 hours with 10-second windows and 15 hours with
-20-second windows, from 2.5 and 3.8 days. The size at which the device stops
-paying (`AUTO_MIN_POINTS`) is still to be measured below 1280 points.
+20-second windows, from 2.5 and 3.8 days.
+
+Short windows (128 to 1024 points, mixed): the GPU did 3800 to 990 windows per
+second, the twenty cores 680 to 150 (and one core about 420 at 128 points), so
+the device wins at every size measured, 9 times at 128 points against one
+core. `AUTO_MIN_POINTS` is therefore 128, the shortest size measured. Mixed
+was within a few per cent of double below 1280 points and 15 to 20 % faster
+above, always with the same numbers, so it became the default.
+
+Where the time goes (`--profile`, mixed, one card): at 10 240 points, 32 %
+deciding the cells and 20 to 23 % for each kind of line (vertical, diagonal,
+white vertical); thresholds, transfers and assembly 4 %. At 2560 points the
+shares are the same within a few points. The decisions run near the card's
+memory bandwidth for an unfused computation (every coordinate difference,
+square and sum is a separate pass over the band), and the line searches copy
+the band for each transposition and shear: these are what an optimisation has
+to reduce. The three runs are in
+`docs/data/benchmarks/gpu_rtx3090_0.26.0.dev0.txt`.
 
 **Consequences.** Results of the reference path move only through the fixed
 order of the sampled distances (some epsilons in their last bit). Tests:

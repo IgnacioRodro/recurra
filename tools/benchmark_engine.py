@@ -182,6 +182,10 @@ def main(argv=None) -> int:
             for k in jobs:
                 count = a.windows or (8 if a.quick else max(20, 10 * max(jobs)))
                 X = windows_of(n, count)
+                if k > 1:
+                    # start the worker processes first: their start-up is a
+                    # cost of the first batch of a session, not of every one
+                    rc.batch_rqa(X[:k], rng=0, engine="numpy", n_jobs=k)
                 t0 = time.perf_counter()
                 rc.batch_rqa(X, rng=0, engine="numpy", n_jobs=k)
                 s = time.perf_counter() - t0

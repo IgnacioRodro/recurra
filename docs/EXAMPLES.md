@@ -852,8 +852,9 @@ same = rc.batch_rqa(X, target_rr=0.05, rng=0, engine="numpy")
 
 # on a GPU, insisting on it (an error if PyTorch sees no device: never a
 # silent fall back to the CPU)
-gpu = rc.batch_rqa(X, target_rr=0.05, rng=0, engine="torch", device="cuda:0",
-                   precision="mixed")              # single precision, cells near epsilon in double
+gpu = rc.batch_rqa(X, target_rr=0.05, rng=0, engine="torch", device="cuda:0")
+# precision="mixed" is the default there: float32, with every cell near epsilon
+# recomputed in float64, so the same numbers as "double", faster [DD-125]
 ```
 
 `engine="auto"` -- the default here and in `metrics()` -- takes the first CUDA

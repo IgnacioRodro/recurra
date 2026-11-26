@@ -345,10 +345,12 @@ class WindowedRecurrence:
             offset = (X.mean(axis=0) if rm.metric in TRANSLATION_INVARIANT
                       else np.zeros(X.shape[1]))
             items.append((i, X - offset, float(th.scalar), int(rm.theiler), rm.metric))
+        # A plot built in double gets the device's mixed precision: the same
+        # decisions, faster [DD-125]. One built in single stays single.
         precision = self.build_kwargs.get("precision", "double")
         hists, info = device_histograms(
             items, device=choice.device,
-            precision="single" if precision == "single" else "double",
+            precision="single" if precision == "single" else "mixed",
             device_memory_gb=get_config().gpu_memory_budget_gb)
         return hists, {**choice.provenance(), **info,
                        "windows_on_device": len(hists), "windows": len(self)}

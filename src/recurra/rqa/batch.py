@@ -83,7 +83,7 @@ def batch_rqa(windows, *, target_rr: float = 0.05, epsilon: float | None = None,
               v_min: int = 8, w_min: int = 2, denominator: str = "theiler_corrected",
               metrics: Sequence[str] | str = "all", n_samples: int = 200_000,
               rng: SeedLike = None, engine: str = "auto", device: str | None = None,
-              precision: str = "double", batch_size: int | None = None,
+              precision: str = "mixed", batch_size: int | None = None,
               device_memory_gb: float | None = None, n_jobs: int | None = None,
               return_histograms: bool = False):
     """Recurrence quantification of many windows, one row per window [DD-125].
@@ -111,9 +111,10 @@ def batch_rqa(windows, *, target_rr: float = 0.05, epsilon: float | None = None,
         ``"torch"`` asks for the device and fails if it is not there, never
         falling back to the CPU [DD-125].
     precision
-        Torch engine: ``"double"`` (default; decisions as the reference),
-        ``"single"`` or ``"mixed"`` (single, with the cells near epsilon
-        recomputed in double).
+        Torch engine: ``"mixed"`` (default: float32, with every cell near
+        epsilon recomputed in float64, so the decisions of ``"double"`` and of
+        the reference, faster), ``"double"`` or ``"single"`` (float32 only,
+        which can differ from the reference next to epsilon) [DD-125].
     batch_size, device_memory_gb
         Torch engine: windows per batch and the device memory it may use
         (default ``Config.gpu_memory_budget_gb``). Neither changes a result.

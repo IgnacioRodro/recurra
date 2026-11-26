@@ -11,7 +11,7 @@ Recurrence analysis over **arbitrary state spaces**, for multivariate signals an
 
 Unlike existing RQA libraries, the phase space is not necessarily built by Takens delays: it can be defined from observable variables — for instance `s(t) = (cos φ_low, sin φ_low, A_high)` for PAC — or by combining both routes. Nothing forces the coupling reading: the same engine serves signals with no coupling at all.
 
-> **Status: pre-alpha; latest release 0.25.0.** Every phase except F11 (higher-order tensors) and F12 (Costas arrays) is implemented and tested: **555 test functions, all green**. The library has carried one complete real study, a 49-child EEG corpus. What remains is listed in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> **Status: pre-alpha; latest release 0.25.0.** Every phase except F11 (higher-order tensors) and F12 (Costas arrays) is implemented and tested: **556 test functions, all green**. The library has carried one complete real study, a 49-child EEG corpus. What remains is listed in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ---
 
@@ -132,7 +132,7 @@ regenerates these.
 | **Windowed RP/CRP/JRP with overlap** | ✅ |
 | Multi-subject batch, lazy matrices | ✅ |
 | Meta-recurrence: RP, CRP and JRP of the window measurements | ✅ |
-| GPU engine (PyTorch, CUDA), chosen automatically, same results as the CPU | ✅ RP; CUDA validation in progress |
+| GPU engine (PyTorch, CUDA), chosen automatically, same results as the CPU | ✅ RP, validated on CUDA; cross and joint plots to come |
 | Comparability contracts and group separation | ✅ |
 | Figures: 22 single + 8 comparison | ✅ |
 | RQA: 14 metrics, streamed line histograms | ✅ |

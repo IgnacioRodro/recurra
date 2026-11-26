@@ -228,7 +228,7 @@ def test_batch_size_and_band_height_change_nothing():
                                    batch_size=1, return_histograms=True),
         "bands of 3": rc.batch_rqa(X, rng=0, engine="torch", device="cpu",
                                    batch_size=2,
-                                   device_memory_gb=389 * 3 * 2 * _bytes("double") / 1e9,
+                                   device_memory_gb=389 * 3 * 2 * _bytes("mixed") / 1e9,
                                    return_histograms=True),
     }
     ref_table, ref_hists = runs.pop("all at once")
@@ -379,3 +379,13 @@ def test_stage_profile_is_off_by_default_and_complete_when_on(monkeypatch):
     stages = timed.attrs["provenance"]["stage_seconds"]
     assert {"threshold", "decide", "vertical", "diagonal", "white_vertical"} <= set(stages)
     assert plain.equals(timed)
+
+
+def test_mixed_is_the_default_precision_on_the_device():
+    """DD-125: the torch engine defaults to mixed, which decides as double."""
+    pytest.importorskip("torch")
+    X = _windows(200, count=2)
+    default = rc.batch_rqa(X, rng=0, engine="torch", device="cpu")
+    assert default.attrs["provenance"]["precision"] == "mixed"
+    reference = rc.batch_rqa(X, rng=0, engine="numpy", n_jobs=1)
+    _same_tables(reference, default, "default precision")

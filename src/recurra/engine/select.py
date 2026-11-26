@@ -14,9 +14,11 @@ silent simplification (P3):
 * an explicit ``engine="torch"`` that cannot run raises, with the reason and
   what to install or pass instead. It never falls back to the CPU.
 
-Small jobs stay on the CPU under ``auto``: below ``AUTO_MIN_POINTS`` points
-per window, moving data to the device costs more than it saves. The value is
-provisional until measured on the target hardware.
+Very short windows stay on the CPU under ``auto``: below ``AUTO_MIN_POINTS``
+points per window. Measured on an RTX 3090 against twenty CPU cores, the GPU
+was already 9 times faster at 128 points, the shortest size measured (and 40
+times faster than the CPU with worker processes, whose start-up dominates
+there), so the threshold sits at that measured size rather than below it.
 """
 from __future__ import annotations
 
@@ -30,8 +32,9 @@ from ..exceptions import BackendUnavailable, CaveatWarning, ParameterError
 
 ENGINES = ("auto", "numpy", "torch")
 
-#: Under ``engine="auto"``, windows shorter than this stay on the CPU.
-AUTO_MIN_POINTS = 512
+#: Under ``engine="auto"``, windows shorter than this stay on the CPU: the
+#: shortest size at which the GPU was measured to win (DD-125).
+AUTO_MIN_POINTS = 128
 
 
 @dataclass(frozen=True)
@@ -165,7 +168,7 @@ def resolve_engine(engine: str = "auto", device: str | None = None, *,
     elif n_points is not None and n_points < AUTO_MIN_POINTS:
         choice = EngineChoice(
             "numpy", "cpu",
-            f"windows of fewer than {AUTO_MIN_POINTS} points are faster on the CPU")
+            f"windows of fewer than {AUTO_MIN_POINTS} points stay on the CPU")
     else:
         dev = visible[0] if device in (None, "cuda") else device
         if dev not in visible:

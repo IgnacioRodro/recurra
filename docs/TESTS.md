@@ -38,7 +38,7 @@ python examples/run_all.py        # 54 figures, 45 tables, 3 run reports
 | 4 | `test_comparability.py` | Comparability and groups | DD-42, DD-43, DD-44 | 29 |
 | 5 | `test_docs.py` | The living documents | DD-45 | 18 |
 | 6 | `test_dynamics.py` | test_dynamics.py |  | 63 |
-| 7 | `test_engine.py` | test_engine.py |  | 22 |
+| 7 | `test_engine.py` | test_engine.py |  | 23 |
 | 8 | `test_export.py` | CSV export | DD-10 | 4 |
 | 9 | `test_images.py` | test_images.py |  | 16 |
 | 10 | `test_ingest.py` | Ingestion | DD-08, DD-06 | 12 |
@@ -57,7 +57,7 @@ python examples/run_all.py        # 54 figures, 45 tables, 3 run reports
 | 23 | `test_validation.py` | test_validation.py |  | 26 |
 | 24 | `test_viz.py` | Figures | DD-27, DD-30, DD-31, DD-38, DD-49..52 | 41 |
 | 25 | `test_windowed.py` | Windowed analysis | DD-39, DD-40, DD-41 | 49 |
-| | | | **total** | **555 functions** |
+| | | | **total** | **556 functions** |
 
 Parametrised tests expand to more cases; run `pytest -q` for the count.
 
@@ -272,6 +272,7 @@ Decisions: DD-45
 | `test_windowed_metrics_are_the_same_on_cuda` | Windowed metrics are the same on cuda. |
 | `test_mixed_equals_double_on_coordinates_far_from_epsilon` | The float32 band widens with the window's reach [DD-125]: two clusters 4000 apart with epsilon of order one would put float32 rounding (about 2.4e-4 of a coordinate) far outside a fixed 1e-4 band. |
 | `test_stage_profile_is_off_by_default_and_complete_when_on` | The benchmark's --profile switch: seconds per stage in the provenance, nothing when it is off, and the same table either way. |
+| `test_mixed_is_the_default_precision_on_the_device` | DD-125: the torch engine defaults to mixed, which decides as double. |
 
 ## 8. `test_export.py` — CSV export
 
